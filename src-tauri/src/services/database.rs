@@ -311,14 +311,120 @@ impl Database {
 
     pub async fn get_segments_for_clip(&self, clip_id: &str) -> Result<Vec<Segment>> {
         let rows = sqlx::query(
-            "SELECT id, source_clip_id, start_time_ms, end_time_ms, duration_ms, thumbnail_path, motion_magnitude, gimbal_pitch_delta_avg, gimbal_yaw_delta_avg, gimbal_smoothness, altitude_delta, gps_speed_avg, iso_avg, visual_quality, has_scene_change, is_selected, user_adjusted_start_ms, user_adjusted_end_ms FROM segments WHERE source_clip_id = ?"
+            "SELECT id, source_clip_id, start_time_ms, end_time_ms, duration_ms, thumbnail_path, motion_magnitude, gimbal_pitch_delta_avg, gimbal_yaw_delta_avg, gimbal_smoothness, altitude_delta, gps_speed_avg, iso_avg, visual_quality, has_scene_change, is_selected, user_adjusted_start_ms, user_adjusted_end_ms FROM segments WHERE source_clip_id = ? ORDER BY start_time_ms"
         )
         .bind(clip_id)
         .fetch_all(&self.pool)
         .await?;
 
-        let segments = rows
-            .into_iter()
+        Ok(Self::rows_to_segments(rows))
+    }
+
+    pub async fn get_clip(&self, clip_id: &str) -> Result<Option<SourceClip>> {
+        let row = sqlx::query(
+            "SELECT id, flight_id, filename, source_path, proxy_path, proxy_source, srt_path, duration_sec, resolution_width, resolution_height, framerate, recorded_at FROM source_clips WHERE id = ?"
+        )
+        .bind(clip_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let recorded_at_str: Option<String> = row.get("recorded_at");
+                Ok(Some(SourceClip {
+                    id: row.get("id"),
+                    flight_id: row.get("flight_id"),
+                    filename: row.get("filename"),
+                    source_path: row.get("source_path"),
+                    proxy_path: row.get("proxy_path"),
+                    proxy_source: row.get("proxy_source"),
+                    srt_path: row.get("srt_path"),
+                    duration_sec: row.get("duration_sec"),
+                    resolution_width: row.get("resolution_width"),
+                    resolution_height: row.get("resolution_height"),
+                    framerate: row.get("framerate"),
+                    recorded_at: recorded_at_str.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&chrono::Utc))),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn delete_segments_for_clip(&self, clip_id: &str) -> Result<()> {
+        // First delete scores for these segments
+        sqlx::query(
+            "DELETE FROM segment_scores WHERE segment_id IN (SELECT id FROM segments WHERE source_clip_id = ?)"
+        )
+        .bind(clip_id)
+        .execute(&self.pool)
+        .await?;
+
+        // Then delete the segments
+        sqlx::query("DELETE FROM segments WHERE source_clip_id = ?")
+            .bind(clip_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn insert_segment_score(&self, segment_id: &str, profile_id: &str, score: f64) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO segment_scores (segment_id, profile_id, score) VALUES (?, ?, ?)"
+        )
+        .bind(segment_id)
+        .bind(profile_id)
+        .bind(score)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_segment_scores(&self, segment_id: &str) -> Result<std::collections::HashMap<String, f64>> {
+        let rows = sqlx::query(
+            "SELECT profile_id, score FROM segment_scores WHERE segment_id = ?"
+        )
+        .bind(segment_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut scores = std::collections::HashMap::new();
+        for row in rows {
+            let profile_id: String = row.get("profile_id");
+            let score: f64 = row.get("score");
+            scores.insert(profile_id, score);
+        }
+
+        Ok(scores)
+    }
+
+    pub async fn get_top_segments_for_flight(&self, flight_id: &str, profile_id: &str, limit: u32) -> Result<Vec<Segment>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT s.id, s.source_clip_id, s.start_time_ms, s.end_time_ms, s.duration_ms, s.thumbnail_path,
+                   s.motion_magnitude, s.gimbal_pitch_delta_avg, s.gimbal_yaw_delta_avg, s.gimbal_smoothness,
+                   s.altitude_delta, s.gps_speed_avg, s.iso_avg, s.visual_quality, s.has_scene_change,
+                   s.is_selected, s.user_adjusted_start_ms, s.user_adjusted_end_ms
+            FROM segments s
+            JOIN source_clips c ON s.source_clip_id = c.id
+            JOIN segment_scores sc ON s.id = sc.segment_id
+            WHERE c.flight_id = ? AND sc.profile_id = ?
+            ORDER BY sc.score DESC
+            LIMIT ?
+            "#
+        )
+        .bind(flight_id)
+        .bind(profile_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(Self::rows_to_segments(rows))
+    }
+
+    fn rows_to_segments(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<Segment> {
+        rows.into_iter()
             .map(|row| {
                 let has_scene_change: Option<i32> = row.get("has_scene_change");
                 let is_selected: i32 = row.get("is_selected");
@@ -343,8 +449,6 @@ impl Database {
                     user_adjusted_end_ms: row.get("user_adjusted_end_ms"),
                 }
             })
-            .collect();
-
-        Ok(segments)
+            .collect()
     }
 }
