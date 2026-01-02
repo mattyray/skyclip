@@ -3,8 +3,8 @@ mod models;
 mod services;
 
 use commands::{
-    get_flight_clips, ingest_folder, init_database, list_flights, parse_srt, scan_folder,
-    AppState,
+    analyze_clip, analyze_flight, get_clip_segments, get_flight_clips, get_top_segments,
+    ingest_folder, init_database, list_flights, list_profiles, parse_srt, scan_folder, AppState,
 };
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -35,6 +35,11 @@ pub fn run() {
             list_flights,
             get_flight_clips,
             parse_srt,
+            analyze_clip,
+            analyze_flight,
+            get_clip_segments,
+            get_top_segments,
+            list_profiles,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
