@@ -132,8 +132,10 @@ pub async fn ingest_folder(
 
     let proxies_dir = app_data_dir.join("proxies");
     let thumbnails_dir = app_data_dir.join("thumbnails");
+    let srt_dir = app_data_dir.join("srt");
     std::fs::create_dir_all(&proxies_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&thumbnails_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&srt_dir).map_err(|e| e.to_string())?;
 
     // Scan for clips
     let clips = scan_folder(folder_path.clone()).await?;
