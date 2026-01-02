@@ -106,6 +106,32 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS segment_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                segment_id TEXT NOT NULL REFERENCES segments(id),
+                profile_id TEXT NOT NULL,
+                score REAL NOT NULL,
+                UNIQUE(segment_id, profile_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_segment_scores_segment ON segment_scores(segment_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_segment_scores_profile ON segment_scores(profile_id, score DESC)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
