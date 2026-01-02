@@ -1,0 +1,25 @@
+{
+  "id": "cinematic",
+  "name": "Cinematic",
+  "description": "Smooth, intentional camera movements. Film-quality shots.",
+  "weights": {
+    "gimbal_smoothness": 0.35,
+    "gimbal_pitch_delta": 0.15,
+    "gimbal_yaw_delta": 0.15,
+    "gps_speed": 0.10,
+    "altitude_delta": 0.10,
+    "iso_penalty": 0.10,
+    "motion_magnitude": 0.05
+  },
+  "thresholds": {
+    "min_gimbal_smoothness": 0.7,
+    "max_iso": 800,
+    "min_duration_sec": 5,
+    "max_duration_sec": 30
+  },
+  "preferences": {
+    "prefer_slow_motion": true,
+    "prefer_reveals": true,
+    "avoid_jerky": true
+  }
+}

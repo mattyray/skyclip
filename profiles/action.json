@@ -1,0 +1,26 @@
+{
+  "id": "action",
+  "name": "Action",
+  "description": "High-energy movement. Fast drone maneuvers and tracking shots.",
+  "weights": {
+    "gps_speed": 0.30,
+    "motion_magnitude": 0.25,
+    "altitude_delta": 0.15,
+    "gimbal_yaw_delta": 0.10,
+    "gimbal_pitch_delta": 0.10,
+    "gimbal_smoothness": 0.05,
+    "iso_penalty": 0.05
+  },
+  "thresholds": {
+    "min_gps_speed": 5.0,
+    "min_motion_magnitude": 3.0,
+    "max_iso": 1600,
+    "min_duration_sec": 3,
+    "max_duration_sec": 15
+  },
+  "preferences": {
+    "prefer_fast_movement": true,
+    "prefer_altitude_changes": true,
+    "avoid_static": true
+  }
+}

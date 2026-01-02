@@ -1,0 +1,25 @@
+{
+  "id": "precision",
+  "name": "Precision",
+  "description": "Technical excellence. Steady shots with perfect exposure.",
+  "weights": {
+    "gimbal_smoothness": 0.40,
+    "iso_penalty": 0.25,
+    "gimbal_pitch_delta": 0.10,
+    "gimbal_yaw_delta": 0.10,
+    "gps_speed": 0.05,
+    "altitude_delta": 0.05,
+    "motion_magnitude": 0.05
+  },
+  "thresholds": {
+    "min_gimbal_smoothness": 0.85,
+    "max_iso": 400,
+    "min_duration_sec": 8,
+    "max_duration_sec": 45
+  },
+  "preferences": {
+    "prefer_low_iso": true,
+    "prefer_stable": true,
+    "avoid_overexposed": true
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "discovery",
+  "name": "Discovery",
+  "description": "Balanced scoring. Find all potentially good moments without bias.",
+  "weights": {
+    "gimbal_smoothness": 0.20,
+    "gimbal_pitch_delta": 0.15,
+    "gimbal_yaw_delta": 0.15,
+    "gps_speed": 0.15,
+    "motion_magnitude": 0.15,
+    "altitude_delta": 0.10,
+    "iso_penalty": 0.10
+  },
+  "thresholds": {
+    "max_iso": 3200,
+    "min_duration_sec": 3,
+    "max_duration_sec": 30
+  },
+  "preferences": {
+    "balanced": true,
+    "surface_all": true
+  }
+}
