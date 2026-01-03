@@ -258,6 +258,14 @@ pub async fn list_flights(state: State<'_, AppState>) -> Result<Vec<Flight>, Str
     db.list_flights().await.map_err(|e| e.to_string())
 }
 
+/// Delete a flight and all associated data
+#[tauri::command]
+pub async fn delete_flight(state: State<'_, AppState>, flight_id: String) -> Result<(), String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+    db.delete_flight(&flight_id).await.map_err(|e| e.to_string())
+}
+
 /// Get clips for a flight
 #[tauri::command]
 pub async fn get_flight_clips(

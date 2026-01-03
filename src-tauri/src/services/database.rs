@@ -277,6 +277,44 @@ impl Database {
         Ok(())
     }
 
+    /// Delete a flight and all associated data (clips, segments, scores)
+    pub async fn delete_flight(&self, flight_id: &str) -> Result<()> {
+        // Get clip IDs for this flight to clean up segments and scores
+        let clip_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM source_clips WHERE flight_id = ?"
+        )
+        .bind(flight_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Delete segment scores for all clips in this flight
+        for clip_id in &clip_ids {
+            sqlx::query("DELETE FROM segment_scores WHERE segment_id IN (SELECT id FROM segments WHERE source_clip_id = ?)")
+                .bind(clip_id)
+                .execute(&self.pool)
+                .await?;
+
+            sqlx::query("DELETE FROM segments WHERE source_clip_id = ?")
+                .bind(clip_id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        // Delete clips
+        sqlx::query("DELETE FROM source_clips WHERE flight_id = ?")
+            .bind(flight_id)
+            .execute(&self.pool)
+            .await?;
+
+        // Delete flight
+        sqlx::query("DELETE FROM flights WHERE id = ?")
+            .bind(flight_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
     // Segment operations
     pub async fn insert_segment(&self, segment: &Segment) -> Result<()> {
         sqlx::query(

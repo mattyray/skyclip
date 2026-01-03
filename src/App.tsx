@@ -187,6 +187,21 @@ function App() {
     }
   }
 
+  async function handleDeleteFlight(flightId: string) {
+    if (!confirm("Delete this flight and all its data?")) return;
+
+    try {
+      await invoke("delete_flight", { flightId });
+      await loadFlights();
+      if (selectedFlight?.id === flightId) {
+        setSelectedFlight(null);
+        setCurrentView("library");
+      }
+    } catch (e) {
+      setError(`Failed to delete flight: ${e}`);
+    }
+  }
+
   async function analyzeFlight() {
     if (!selectedFlight) return;
 
@@ -348,12 +363,24 @@ function App() {
           ) : (
             <ul className="flights-list">
               {flights.map((flight) => (
-                <li key={flight.id} onClick={() => openFlight(flight)}>
-                  <strong>{flight.name}</strong>
-                  <span className="flight-meta">
-                    {flight.total_clips} clips &bull;{" "}
-                    {new Date(flight.import_date).toLocaleDateString()}
-                  </span>
+                <li key={flight.id}>
+                  <div className="flight-info" onClick={() => openFlight(flight)}>
+                    <strong>{flight.name}</strong>
+                    <span className="flight-path">{flight.source_path}</span>
+                    <span className="flight-meta">
+                      {flight.total_clips} clips &bull;{" "}
+                      {new Date(flight.import_date).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <button
+                    className="delete-button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteFlight(flight.id);
+                    }}
+                  >
+                    Delete
+                  </button>
                 </li>
               ))}
             </ul>

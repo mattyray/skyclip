@@ -3,8 +3,9 @@ mod models;
 mod services;
 
 use commands::{
-    analyze_clip, analyze_flight, get_clip_segments, get_flight_clips, get_top_segments,
-    ingest_folder, init_database, list_flights, list_profiles, parse_srt, scan_folder, AppState,
+    analyze_clip, analyze_flight, delete_flight, get_clip_segments, get_flight_clips,
+    get_top_segments, ingest_folder, init_database, list_flights, list_profiles, parse_srt,
+    scan_folder, AppState,
 };
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -33,6 +34,7 @@ pub fn run() {
             scan_folder,
             ingest_folder,
             list_flights,
+            delete_flight,
             get_flight_clips,
             parse_srt,
             analyze_clip,
