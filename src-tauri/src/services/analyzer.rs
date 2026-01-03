@@ -46,12 +46,17 @@ impl TelemetryAnalyzer {
         let gimbal_yaw_delta_avg = average(&yaw_deltas);
 
         // Gimbal smoothness: inverse of jitter (standard deviation of deltas)
-        let pitch_jitter = std_dev(&pitch_deltas);
-        let yaw_jitter = std_dev(&yaw_deltas);
-        let combined_jitter = (pitch_jitter + yaw_jitter) / 2.0;
-        // Map jitter to 0-1 smoothness (lower jitter = higher smoothness)
-        // Using sigmoid-like transform: smoothness = 1 / (1 + jitter/10)
-        let gimbal_smoothness = 1.0 / (1.0 + combined_jitter / 10.0);
+        // If no gimbal data available, default to 1.0 (perfectly smooth - no jitter detected)
+        let gimbal_smoothness = if pitch_deltas.is_empty() && yaw_deltas.is_empty() {
+            1.0 // No gimbal data = assume smooth (neutral value that passes thresholds)
+        } else {
+            let pitch_jitter = std_dev(&pitch_deltas);
+            let yaw_jitter = std_dev(&yaw_deltas);
+            let combined_jitter = (pitch_jitter + yaw_jitter) / 2.0;
+            // Map jitter to 0-1 smoothness (lower jitter = higher smoothness)
+            // Using sigmoid-like transform: smoothness = 1 / (1 + jitter/10)
+            1.0 / (1.0 + combined_jitter / 10.0)
+        };
 
         // Compute GPS speed
         let gps_speeds = self.compute_gps_speeds(frames);
@@ -72,9 +77,17 @@ impl TelemetryAnalyzer {
         };
 
         // Motion magnitude: combined normalized score
-        // Weight gimbal movement and GPS movement
+        // Adapt weights based on available data
         let gimbal_motion = (gimbal_pitch_delta_avg.abs() + gimbal_yaw_delta_avg.abs()) / 2.0;
-        let motion_magnitude = (gimbal_motion * 0.6) + (gps_speed_avg * 0.4);
+        let has_gimbal_data = !pitch_deltas.is_empty() || !yaw_deltas.is_empty();
+
+        // If no gimbal data, rely entirely on GPS; otherwise use weighted combination
+        let motion_magnitude = if has_gimbal_data {
+            (gimbal_motion * 0.6) + (gps_speed_avg * 0.4)
+        } else {
+            // GPS-only mode: use GPS speed + altitude change as motion indicator
+            gps_speed_avg + (altitude_delta.abs() / 10.0) // altitude contributes up to 5 units per 50m
+        };
 
         SegmentSignals {
             gimbal_pitch_delta_avg,
@@ -144,9 +157,19 @@ impl TelemetryAnalyzer {
                 curr.latitude,
                 curr.longitude,
             ) {
+                // Skip invalid coordinates (0,0 or very small values indicate no GPS fix)
+                if lat1.abs() < 0.1 || lon1.abs() < 0.1 || lat2.abs() < 0.1 || lon2.abs() < 0.1 {
+                    continue;
+                }
+
                 let distance = haversine_distance(lat1, lon1, lat2, lon2);
                 let speed = distance / time_delta_sec;
-                speeds.push(speed);
+
+                // Sanity check: max drone speed is ~30 m/s (108 km/h) for consumer drones
+                // Allow up to 50 m/s to account for wind/diving, but filter GPS glitches
+                if speed <= 50.0 {
+                    speeds.push(speed);
+                }
             }
         }
 
@@ -176,16 +199,36 @@ impl TelemetryAnalyzer {
             return vec![];
         }
 
-        // For now, use fixed-duration segments
-        // TODO: Implement smarter segmentation based on activity detection
+        // Calculate actual frame rate from timestamps
+        let total_duration_ms = frames.last().map(|f| f.end_time_ms).unwrap_or(0)
+            - frames.first().map(|f| f.start_time_ms).unwrap_or(0);
+        let total_duration_sec = total_duration_ms as f64 / 1000.0;
+
+        // Frames per second (could be 1fps for old format, 60fps for new Mavic 3)
+        let fps = if total_duration_sec > 0.0 {
+            frames.len() as f64 / total_duration_sec
+        } else {
+            1.0
+        };
+
         let mut segments = Vec::new();
-        let segment_frames = (min_segment_sec * 1.0) as usize; // ~1 frame per second in SRT
-        let max_frames = (max_segment_sec * 1.0) as usize;
+        let min_frames = (min_segment_sec * fps) as usize;
+        let max_frames = (max_segment_sec * fps) as usize;
+
+        // If clip is shorter than min segment, create one segment for the whole clip
+        if frames.len() < min_frames {
+            // Still create a segment if we have at least some data
+            if frames.len() >= 2 {
+                segments.push((0, frames.len()));
+            }
+            return segments;
+        }
 
         let mut start = 0;
         while start < frames.len() {
             let end = (start + max_frames).min(frames.len());
-            if end - start >= segment_frames {
+            // Accept segment if it meets minimum OR if it's the last chunk and has some content
+            if end - start >= min_frames || (end == frames.len() && end - start >= min_frames / 2) {
                 segments.push((start, end));
             }
             start = end;

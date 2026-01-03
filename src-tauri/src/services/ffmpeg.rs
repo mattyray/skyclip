@@ -254,16 +254,38 @@ impl Default for FFmpeg {
 }
 
 fn which_command(name: &str) -> Result<String> {
+    // Common installation paths for ffmpeg on macOS
+    let common_paths = [
+        format!("/opt/homebrew/bin/{}", name),      // Apple Silicon Homebrew
+        format!("/usr/local/bin/{}", name),          // Intel Homebrew / manual install
+        format!("/usr/bin/{}", name),                // System install
+        format!("/opt/local/bin/{}", name),          // MacPorts
+    ];
+
+    // First check common paths directly (works when launched from Finder)
+    for path in &common_paths {
+        if std::path::Path::new(path).exists() {
+            return Ok(path.clone());
+        }
+    }
+
+    // Fallback to which command (works when launched from terminal)
     let output = Command::new("which")
         .arg(name)
         .output()
         .context(format!("Failed to find {name}"))?;
 
-    if !output.status.success() {
-        return Err(anyhow!("{} not found in PATH", name));
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(path);
+        }
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Err(anyhow!(
+        "{} not found. Please install FFmpeg via: brew install ffmpeg",
+        name
+    ))
 }
 
 fn format_time(seconds: f64) -> String {
