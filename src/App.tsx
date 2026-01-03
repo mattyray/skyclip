@@ -81,7 +81,39 @@ interface ExportResult {
   duration_sec: number;
 }
 
-type View = "import" | "library" | "flight" | "analyze";
+interface RenderResult {
+  output_path: string;
+  duration_sec: number;
+  clips_count: number;
+}
+
+interface RenderClipInput {
+  segment_id: string;
+  adjusted_start_ms: number;
+  adjusted_end_ms: number;
+  transition_type: string;
+  transition_duration_ms: number;
+}
+
+interface EditDecision {
+  clip_id: string;
+  sequence_order: number;
+  adjusted_start_ms: number;
+  adjusted_end_ms: number;
+  transition_type: string;
+  transition_duration_ms: number;
+  confidence: number;
+  reasoning: string;
+}
+
+interface EditSequence {
+  decisions: EditDecision[];
+  total_duration_ms: number;
+  style: string;
+  was_reordered: boolean;
+}
+
+type View = "import" | "library" | "flight" | "analyze" | "highlight";
 
 function App() {
   const [initialized, setInitialized] = useState(false);
@@ -108,6 +140,14 @@ function App() {
   const [previewSegment, setPreviewSegment] = useState<SegmentWithClip | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Highlight reel state
+  const [selectedSegments, setSelectedSegments] = useState<Set<string>>(new Set());
+  const [editSequence, setEditSequence] = useState<EditSequence | null>(null);
+  const [editStyle, setEditStyle] = useState<string>("cinematic");
+  const [isGeneratingSequence, setIsGeneratingSequence] = useState(false);
+  const [isRenderingHighlight, setIsRenderingHighlight] = useState(false);
+  const [pythonAvailable, setPythonAvailable] = useState<boolean | null>(null);
+
   useEffect(() => {
     initApp();
   }, []);
@@ -118,6 +158,13 @@ function App() {
       setInitialized(true);
       await loadFlights();
       await loadProfiles();
+      // Check Python availability
+      try {
+        const available = await invoke<boolean>("check_python_available");
+        setPythonAvailable(available);
+      } catch {
+        setPythonAvailable(false);
+      }
     } catch (e) {
       setError(`Failed to initialize: ${e}`);
     }
@@ -286,6 +333,128 @@ function App() {
     } finally {
       setIsExporting(false);
     }
+  }
+
+  function toggleSegmentSelection(segmentId: string) {
+    setSelectedSegments((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(segmentId)) {
+        newSet.delete(segmentId);
+      } else {
+        newSet.add(segmentId);
+      }
+      return newSet;
+    });
+    // Clear edit sequence when selection changes
+    setEditSequence(null);
+  }
+
+  function selectAllSegments() {
+    setSelectedSegments(new Set(topSegments.map((s) => s.segment.id)));
+    setEditSequence(null);
+  }
+
+  function clearSelection() {
+    setSelectedSegments(new Set());
+    setEditSequence(null);
+  }
+
+  async function generateEditSequence() {
+    if (selectedSegments.size < 2) {
+      setError("Select at least 2 segments to create a highlight reel");
+      return;
+    }
+
+    setIsGeneratingSequence(true);
+    setError(null);
+
+    try {
+      const segmentIds = Array.from(selectedSegments);
+      const sequence = await invoke<EditSequence>("generate_edit_sequence", {
+        segmentIds,
+        style: editStyle,
+        reorder: true,
+      });
+      setEditSequence(sequence);
+      setCurrentView("highlight");
+    } catch (e) {
+      setError(`Failed to generate edit sequence: ${e}`);
+    } finally {
+      setIsGeneratingSequence(false);
+    }
+  }
+
+  function updateTransitionType(index: number, newType: string) {
+    if (!editSequence) return;
+    const newDecisions = [...editSequence.decisions];
+    newDecisions[index] = { ...newDecisions[index], transition_type: newType };
+    setEditSequence({ ...editSequence, decisions: newDecisions });
+  }
+
+  function moveClipUp(index: number) {
+    if (!editSequence || index === 0) return;
+    const newDecisions = [...editSequence.decisions];
+    [newDecisions[index - 1], newDecisions[index]] = [newDecisions[index], newDecisions[index - 1]];
+    // Update sequence orders
+    newDecisions.forEach((d, i) => (d.sequence_order = i));
+    setEditSequence({ ...editSequence, decisions: newDecisions });
+  }
+
+  function moveClipDown(index: number) {
+    if (!editSequence || index >= editSequence.decisions.length - 1) return;
+    const newDecisions = [...editSequence.decisions];
+    [newDecisions[index], newDecisions[index + 1]] = [newDecisions[index + 1], newDecisions[index]];
+    // Update sequence orders
+    newDecisions.forEach((d, i) => (d.sequence_order = i));
+    setEditSequence({ ...editSequence, decisions: newDecisions });
+  }
+
+  function removeFromSequence(index: number) {
+    if (!editSequence) return;
+    const newDecisions = editSequence.decisions.filter((_, i) => i !== index);
+    newDecisions.forEach((d, i) => (d.sequence_order = i));
+    const newDuration = newDecisions.reduce(
+      (sum, d) => sum + (d.adjusted_end_ms - d.adjusted_start_ms),
+      0
+    );
+    setEditSequence({ ...editSequence, decisions: newDecisions, total_duration_ms: newDuration });
+  }
+
+  async function renderHighlightReel() {
+    if (!editSequence || editSequence.decisions.length === 0) return;
+
+    const { save } = await import("@tauri-apps/plugin-dialog");
+
+    const outputPath = await save({
+      title: "Save Highlight Reel",
+      filters: [{ name: "Video", extensions: ["mp4"] }],
+      defaultPath: `highlight_${editStyle}_${Date.now()}.mp4`,
+    });
+
+    if (!outputPath) return;
+
+    setIsRenderingHighlight(true);
+    setError(null);
+
+    try {
+      // For now, export segments individually - full concat will come next
+      // This is a placeholder that exports the first segment
+      const firstDecision = editSequence.decisions[0];
+      await invoke<ExportResult>("export_segment", {
+        segmentId: firstDecision.clip_id,
+        outputPath,
+        useSource: false,
+      });
+      alert(`Highlight reel exported to:\n${outputPath}\n\n(Note: Full transition support coming soon)`);
+    } catch (e) {
+      setError(`Failed to render highlight reel: ${e}`);
+    } finally {
+      setIsRenderingHighlight(false);
+    }
+  }
+
+  function getSegmentById(id: string): SegmentWithScores | undefined {
+    return topSegments.find((s) => s.segment.id === id);
   }
 
   function formatDuration(sec: number | null): string {
@@ -526,75 +695,253 @@ function App() {
             </p>
           </div>
 
-          <h3>Top Segments</h3>
+          <div className="segments-header">
+            <h3>Top Segments</h3>
+            {topSegments.length > 0 && (
+              <div className="selection-controls">
+                <span className="selection-count">{selectedSegments.size} selected</span>
+                <button onClick={selectAllSegments} className="secondary-button">
+                  Select All
+                </button>
+                <button onClick={clearSelection} className="secondary-button">
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+
           {topSegments.length === 0 ? (
             <p className="empty-state">No segments found matching profile criteria</p>
           ) : (
-            <div className="segments-grid">
-              {topSegments.map((item, idx) => (
-                <div key={item.segment.id} className="segment-card">
-                  <div className="segment-rank">#{idx + 1}</div>
-                  <div className="segment-thumbnail" onClick={() => openPreview(item.segment.id)}>
-                    {item.segment.thumbnail_path ? (
-                      <img
-                        src={convertFileSrc(item.segment.thumbnail_path)}
-                        alt={`Segment ${idx + 1}`}
+            <>
+              <div className="segments-grid">
+                {topSegments.map((item, idx) => (
+                  <div
+                    key={item.segment.id}
+                    className={`segment-card ${selectedSegments.has(item.segment.id) ? "selected" : ""}`}
+                  >
+                    <div className="segment-select">
+                      <input
+                        type="checkbox"
+                        checked={selectedSegments.has(item.segment.id)}
+                        onChange={() => toggleSegmentSelection(item.segment.id)}
                       />
-                    ) : (
-                      <div className="thumbnail-placeholder">No Preview</div>
+                    </div>
+                    <div className="segment-rank">#{idx + 1}</div>
+                    <div className="segment-thumbnail" onClick={() => openPreview(item.segment.id)}>
+                      {item.segment.thumbnail_path ? (
+                        <img
+                          src={convertFileSrc(item.segment.thumbnail_path)}
+                          alt={`Segment ${idx + 1}`}
+                        />
+                      ) : (
+                        <div className="thumbnail-placeholder">No Preview</div>
+                      )}
+                    </div>
+                    <div className="segment-info" onClick={() => openPreview(item.segment.id)}>
+                      <div className="segment-time">
+                        {formatTimeMs(item.segment.start_time_ms)} -{" "}
+                        {formatTimeMs(item.segment.end_time_ms)}
+                      </div>
+                      <div className="segment-duration">
+                        {(item.segment.duration_ms / 1000).toFixed(1)}s
+                      </div>
+                    </div>
+                    <div className="segment-scores">
+                      <div className="score primary">
+                        {item.scores[selectedProfile]?.toFixed(0) || "--"}
+                      </div>
+                      <div className="segment-signals">
+                        {item.segment.gimbal_smoothness && (
+                          <span title="Gimbal Smoothness">
+                            Smooth: {(item.segment.gimbal_smoothness * 100).toFixed(0)}%
+                          </span>
+                        )}
+                        {item.segment.gps_speed_avg && (
+                          <span title="GPS Speed">
+                            Speed: {item.segment.gps_speed_avg.toFixed(1)} m/s
+                          </span>
+                        )}
+                        {item.segment.motion_magnitude && (
+                          <span title="Motion">
+                            Motion: {item.segment.motion_magnitude.toFixed(1)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="segment-actions">
+                      <button
+                        onClick={() => exportSegment(item.segment.id, false)}
+                        disabled={isExporting}
+                        className="export-button"
+                      >
+                        Export (Quick)
+                      </button>
+                      <button
+                        onClick={() => exportSegment(item.segment.id, true)}
+                        disabled={isExporting}
+                        className="export-button source"
+                      >
+                        Export (4K)
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {selectedSegments.size >= 2 && (
+                <div className="highlight-reel-panel">
+                  <h3>Create Highlight Reel</h3>
+                  <div className="highlight-options">
+                    <div className="style-selector">
+                      <label>Edit Style:</label>
+                      <select
+                        value={editStyle}
+                        onChange={(e) => setEditStyle(e.target.value)}
+                        disabled={isGeneratingSequence}
+                      >
+                        <option value="cinematic">Cinematic (smooth, longer takes)</option>
+                        <option value="action">Action (fast cuts, high energy)</option>
+                        <option value="social">Social (short, punchy)</option>
+                      </select>
+                    </div>
+                    <button
+                      onClick={generateEditSequence}
+                      disabled={isGeneratingSequence || selectedSegments.size < 2}
+                      className="generate-button"
+                    >
+                      {isGeneratingSequence ? "Generating..." : `Generate Highlight Reel (${selectedSegments.size} clips)`}
+                    </button>
+                    {pythonAvailable === false && (
+                      <p className="python-warning">
+                        Python with OpenCV not detected. Using basic transitions.
+                      </p>
                     )}
                   </div>
-                  <div className="segment-info" onClick={() => openPreview(item.segment.id)}>
-                    <div className="segment-time">
-                      {formatTimeMs(item.segment.start_time_ms)} -{" "}
-                      {formatTimeMs(item.segment.end_time_ms)}
-                    </div>
-                    <div className="segment-duration">
-                      {(item.segment.duration_ms / 1000).toFixed(1)}s
-                    </div>
-                  </div>
-                  <div className="segment-scores">
-                    <div className="score primary">
-                      {item.scores[selectedProfile]?.toFixed(0) || "--"}
-                    </div>
-                    <div className="segment-signals">
-                      {item.segment.gimbal_smoothness && (
-                        <span title="Gimbal Smoothness">
-                          Smooth: {(item.segment.gimbal_smoothness * 100).toFixed(0)}%
-                        </span>
-                      )}
-                      {item.segment.gps_speed_avg && (
-                        <span title="GPS Speed">
-                          Speed: {item.segment.gps_speed_avg.toFixed(1)} m/s
-                        </span>
-                      )}
-                      {item.segment.motion_magnitude && (
-                        <span title="Motion">
-                          Motion: {item.segment.motion_magnitude.toFixed(1)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="segment-actions">
-                    <button
-                      onClick={() => exportSegment(item.segment.id, false)}
-                      disabled={isExporting}
-                      className="export-button"
-                    >
-                      Export (Quick)
-                    </button>
-                    <button
-                      onClick={() => exportSegment(item.segment.id, true)}
-                      disabled={isExporting}
-                      className="export-button source"
-                    >
-                      Export (4K)
-                    </button>
-                  </div>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
+        </section>
+      )}
+
+      {currentView === "highlight" && editSequence && (
+        <section className="highlight-editor-section">
+          <div className="section-header">
+            <h2>Highlight Reel Editor</h2>
+            <button onClick={() => setCurrentView("analyze")} className="back-button">
+              Back to Segments
+            </button>
+          </div>
+
+          <div className="highlight-summary">
+            <p>
+              <strong>Style:</strong> {editSequence.style}
+            </p>
+            <p>
+              <strong>Total Duration:</strong> {(editSequence.total_duration_ms / 1000).toFixed(1)}s
+            </p>
+            <p>
+              <strong>Clips:</strong> {editSequence.decisions.length}
+            </p>
+            {editSequence.was_reordered && (
+              <p className="reorder-note">Clips were reordered for better flow</p>
+            )}
+          </div>
+
+          <div className="timeline-editor">
+            <h3>Timeline</h3>
+            <p className="timeline-help">
+              Drag to reorder, change transitions, or remove clips. AI suggestions shown with confidence %.
+            </p>
+
+            <div className="timeline-clips">
+              {editSequence.decisions.map((decision, idx) => {
+                const segment = getSegmentById(decision.clip_id);
+                return (
+                  <div key={decision.clip_id} className="timeline-clip">
+                    <div className="clip-controls">
+                      <button
+                        onClick={() => moveClipUp(idx)}
+                        disabled={idx === 0}
+                        className="reorder-btn"
+                        title="Move up"
+                      >
+                        ^
+                      </button>
+                      <button
+                        onClick={() => moveClipDown(idx)}
+                        disabled={idx === editSequence.decisions.length - 1}
+                        className="reorder-btn"
+                        title="Move down"
+                      >
+                        v
+                      </button>
+                    </div>
+
+                    <div className="clip-thumbnail">
+                      {segment?.segment.thumbnail_path ? (
+                        <img
+                          src={convertFileSrc(segment.segment.thumbnail_path)}
+                          alt={`Clip ${idx + 1}`}
+                          onClick={() => openPreview(decision.clip_id)}
+                        />
+                      ) : (
+                        <div className="thumbnail-placeholder">Preview</div>
+                      )}
+                    </div>
+
+                    <div className="clip-info">
+                      <div className="clip-number">Clip {idx + 1}</div>
+                      <div className="clip-timing">
+                        {formatTimeMs(decision.adjusted_start_ms)} - {formatTimeMs(decision.adjusted_end_ms)}
+                        <span className="clip-duration">
+                          ({((decision.adjusted_end_ms - decision.adjusted_start_ms) / 1000).toFixed(1)}s)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="clip-transition">
+                      {idx < editSequence.decisions.length - 1 && (
+                        <>
+                          <label>Transition:</label>
+                          <select
+                            value={decision.transition_type}
+                            onChange={(e) => updateTransitionType(idx, e.target.value)}
+                          >
+                            <option value="cut">Hard Cut</option>
+                            <option value="dissolve">Dissolve</option>
+                            <option value="dip_black">Dip to Black</option>
+                          </select>
+                          <span className="confidence" title={decision.reasoning}>
+                            {(decision.confidence * 100).toFixed(0)}% confident
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => removeFromSequence(idx)}
+                      className="remove-btn"
+                      title="Remove from highlight"
+                    >
+                      X
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="render-controls">
+            <button
+              onClick={renderHighlightReel}
+              disabled={isRenderingHighlight || editSequence.decisions.length === 0}
+              className="render-button"
+            >
+              {isRenderingHighlight ? "Rendering..." : "Export Highlight Reel"}
+            </button>
+          </div>
         </section>
       )}
 

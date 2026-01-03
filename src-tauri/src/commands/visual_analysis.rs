@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::ingest::AppState;
-use crate::services::{PythonSidecar, ClipInfo};
+use crate::services::{PythonSidecar, ClipInfo, FFmpeg, ConcatClip};
 
 /// Visual analysis result for a segment
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,4 +220,90 @@ pub async fn suggest_transition(
         },
         &style,
     )
+}
+
+/// Render input for highlight reel
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderClipInput {
+    pub segment_id: String,
+    pub adjusted_start_ms: i64,
+    pub adjusted_end_ms: i64,
+    pub transition_type: String,
+    pub transition_duration_ms: i64,
+}
+
+/// Render result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderResult {
+    pub output_path: String,
+    pub duration_sec: f64,
+    pub clips_count: usize,
+}
+
+/// Render a highlight reel from an edit sequence
+#[tauri::command]
+pub async fn render_highlight_reel(
+    state: State<'_, AppState>,
+    clips: Vec<RenderClipInput>,
+    output_path: String,
+    use_source: bool,
+) -> Result<RenderResult, String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    // Build ConcatClip list by resolving segment IDs to paths
+    let mut concat_clips = Vec::new();
+    let mut total_duration_ms: i64 = 0;
+
+    for clip_input in &clips {
+        let segment = db
+            .get_segment(&clip_input.segment_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Segment not found: {}", clip_input.segment_id))?;
+
+        let source_clip = db
+            .get_clip(&segment.source_clip_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Clip not found: {}", segment.source_clip_id))?;
+
+        // Use source for quality, proxy for speed
+        let input_path = if use_source {
+            source_clip.source_path.clone()
+        } else {
+            source_clip
+                .proxy_path
+                .clone()
+                .unwrap_or(source_clip.source_path.clone())
+        };
+
+        // Use adjusted times from edit sequence
+        let start_sec = clip_input.adjusted_start_ms as f64 / 1000.0;
+        let end_sec = clip_input.adjusted_end_ms as f64 / 1000.0;
+
+        concat_clips.push(ConcatClip {
+            input_path,
+            start_sec,
+            end_sec,
+            transition_type: clip_input.transition_type.clone(),
+            transition_duration_ms: clip_input.transition_duration_ms,
+        });
+
+        total_duration_ms += clip_input.adjusted_end_ms - clip_input.adjusted_start_ms;
+    }
+
+    drop(db_guard);
+
+    // Render using FFmpeg
+    let ffmpeg = FFmpeg::new().map_err(|e| e.to_string())?;
+    ffmpeg
+        .concat_with_transitions(concat_clips.clone(), &output_path, true)
+        .map_err(|e| e.to_string())?;
+
+    Ok(RenderResult {
+        output_path,
+        duration_sec: total_duration_ms as f64 / 1000.0,
+        clips_count: clips.len(),
+    })
 }

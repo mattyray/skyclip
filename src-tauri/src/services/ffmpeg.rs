@@ -247,6 +247,268 @@ impl FFmpeg {
     }
 }
 
+/// Clip definition for concatenation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConcatClip {
+    pub input_path: String,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub transition_type: String,      // "cut", "dissolve", "dip_black"
+    pub transition_duration_ms: i64,
+}
+
+impl FFmpeg {
+    /// Concatenate multiple clips with transitions into a single output
+    pub fn concat_with_transitions(
+        &self,
+        clips: Vec<ConcatClip>,
+        output_path: &str,
+        use_hw_accel: bool,
+    ) -> Result<()> {
+        if clips.is_empty() {
+            return Err(anyhow!("No clips to concatenate"));
+        }
+
+        // For a single clip or all "cut" transitions, use simple concat
+        let has_transitions = clips.iter().skip(1).any(|c| c.transition_type != "cut");
+
+        if clips.len() == 1 || !has_transitions {
+            return self.concat_simple(&clips, output_path, use_hw_accel);
+        }
+
+        // Use filter_complex with xfade for transitions
+        self.concat_with_xfade(&clips, output_path, use_hw_accel)
+    }
+
+    /// Simple concatenation without transitions (or all cuts)
+    fn concat_simple(&self, clips: &[ConcatClip], output_path: &str, use_hw_accel: bool) -> Result<()> {
+        // Create a temp file for the concat list
+        let temp_dir = std::env::temp_dir();
+        let concat_list_path = temp_dir.join(format!("skyclip_concat_{}.txt", uuid::Uuid::new_v4()));
+        let temp_clips_dir = temp_dir.join(format!("skyclip_clips_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_clips_dir)?;
+
+        // First, extract each segment to a temp file
+        let mut temp_files = Vec::new();
+        for (i, clip) in clips.iter().enumerate() {
+            let temp_output = temp_clips_dir.join(format!("clip_{:04}.mp4", i));
+
+            let mut args = vec![];
+            if use_hw_accel {
+                args.extend(["-hwaccel", "videotoolbox"]);
+            }
+            args.extend([
+                "-ss", &format_time(clip.start_sec),
+                "-to", &format_time(clip.end_sec),
+                "-i", &clip.input_path,
+                "-c:v", "libx264",
+                "-crf", "18",
+                "-preset", "fast",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-y",
+            ]);
+
+            let status = Command::new(&self.ffmpeg_path)
+                .args(&args)
+                .arg(&temp_output)
+                .status()
+                .context("Failed to extract clip segment")?;
+
+            if !status.success() {
+                // Clean up
+                let _ = std::fs::remove_dir_all(&temp_clips_dir);
+                return Err(anyhow!("Failed to extract clip segment {}", i));
+            }
+
+            temp_files.push(temp_output);
+        }
+
+        // Write concat list
+        let concat_content: String = temp_files
+            .iter()
+            .map(|p| format!("file '{}'\n", p.to_string_lossy()))
+            .collect();
+        std::fs::write(&concat_list_path, &concat_content)?;
+
+        // Concatenate
+        let status = Command::new(&self.ffmpeg_path)
+            .args([
+                "-f", "concat",
+                "-safe", "0",
+                "-i",
+            ])
+            .arg(&concat_list_path)
+            .args(["-c", "copy", "-y"])
+            .arg(output_path)
+            .status()
+            .context("Failed to concatenate clips")?;
+
+        // Clean up temp files
+        let _ = std::fs::remove_file(&concat_list_path);
+        let _ = std::fs::remove_dir_all(&temp_clips_dir);
+
+        if !status.success() {
+            return Err(anyhow!("FFmpeg concatenation failed"));
+        }
+
+        Ok(())
+    }
+
+    /// Concatenation with xfade transitions
+    fn concat_with_xfade(&self, clips: &[ConcatClip], output_path: &str, use_hw_accel: bool) -> Result<()> {
+        // First extract all clips to temp files with consistent encoding
+        let temp_dir = std::env::temp_dir();
+        let temp_clips_dir = temp_dir.join(format!("skyclip_xfade_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_clips_dir)?;
+
+        let mut temp_files = Vec::new();
+        let mut clip_durations = Vec::new();
+
+        for (i, clip) in clips.iter().enumerate() {
+            let temp_output = temp_clips_dir.join(format!("clip_{:04}.mp4", i));
+            let duration = clip.end_sec - clip.start_sec;
+            clip_durations.push(duration);
+
+            let mut args = vec![];
+            if use_hw_accel {
+                args.extend(["-hwaccel", "videotoolbox"]);
+            }
+            args.extend([
+                "-ss", &format_time(clip.start_sec),
+                "-to", &format_time(clip.end_sec),
+                "-i", &clip.input_path,
+                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
+                "-c:v", "libx264",
+                "-crf", "18",
+                "-preset", "fast",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "48000",
+                "-ac", "2",
+                "-y",
+            ]);
+
+            let status = Command::new(&self.ffmpeg_path)
+                .args(&args)
+                .arg(&temp_output)
+                .status()
+                .context("Failed to extract clip segment for xfade")?;
+
+            if !status.success() {
+                let _ = std::fs::remove_dir_all(&temp_clips_dir);
+                return Err(anyhow!("Failed to extract clip {} for xfade", i));
+            }
+
+            temp_files.push(temp_output);
+        }
+
+        // Build the filter_complex string
+        let mut filter_parts = Vec::new();
+        let mut video_labels = Vec::new();
+        let mut audio_labels = Vec::new();
+
+        // Input labels
+        for i in 0..temp_files.len() {
+            video_labels.push(format!("[{}:v]", i));
+            audio_labels.push(format!("[{}:a]", i));
+        }
+
+        // Build xfade chain for video
+        if clips.len() >= 2 {
+            let mut current_video = video_labels[0].clone();
+            let mut cumulative_duration = clip_durations[0];
+
+            for i in 1..clips.len() {
+                let transition = &clips[i].transition_type;
+                let trans_duration_sec = clips[i].transition_duration_ms as f64 / 1000.0;
+                let trans_duration_sec = trans_duration_sec.max(0.1).min(2.0); // Clamp between 0.1 and 2 seconds
+
+                // Calculate offset (when transition starts)
+                let offset = (cumulative_duration - trans_duration_sec).max(0.0);
+
+                let xfade_transition = match transition.as_str() {
+                    "dissolve" => "fade",
+                    "dip_black" => "fadeblack",
+                    _ => "fade", // Default to fade for unknown transitions
+                };
+
+                let out_label = format!("[v{}]", i);
+                filter_parts.push(format!(
+                    "{}{}xfade=transition={}:duration={}:offset={}{}",
+                    current_video,
+                    video_labels[i],
+                    xfade_transition,
+                    trans_duration_sec,
+                    offset,
+                    out_label
+                ));
+
+                current_video = out_label;
+                cumulative_duration = offset + clip_durations[i];
+            }
+
+            // Audio crossfade
+            let mut current_audio = audio_labels[0].clone();
+            cumulative_duration = clip_durations[0];
+
+            for i in 1..clips.len() {
+                let trans_duration_sec = clips[i].transition_duration_ms as f64 / 1000.0;
+                let trans_duration_sec = trans_duration_sec.max(0.1).min(2.0);
+                let offset = (cumulative_duration - trans_duration_sec).max(0.0);
+
+                let out_label = format!("[a{}]", i);
+                filter_parts.push(format!(
+                    "{}{}acrossfade=d={}:c1=tri:c2=tri{}",
+                    current_audio,
+                    audio_labels[i],
+                    trans_duration_sec,
+                    out_label
+                ));
+
+                current_audio = out_label;
+                cumulative_duration = offset + clip_durations[i];
+            }
+
+            let filter_complex = filter_parts.join(";");
+            let final_video = format!("[v{}]", clips.len() - 1);
+            let final_audio = format!("[a{}]", clips.len() - 1);
+
+            // Build ffmpeg command
+            let mut cmd = Command::new(&self.ffmpeg_path);
+
+            for temp_file in &temp_files {
+                cmd.arg("-i").arg(temp_file);
+            }
+
+            let status = cmd
+                .args([
+                    "-filter_complex", &filter_complex,
+                    "-map", &final_video,
+                    "-map", &final_audio,
+                    "-c:v", "libx264",
+                    "-crf", "18",
+                    "-preset", "fast",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-y",
+                ])
+                .arg(output_path)
+                .status()
+                .context("Failed to execute ffmpeg with xfade")?;
+
+            // Clean up
+            let _ = std::fs::remove_dir_all(&temp_clips_dir);
+
+            if !status.success() {
+                return Err(anyhow!("FFmpeg xfade concatenation failed"));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for FFmpeg {
     fn default() -> Self {
         Self::new().expect("FFmpeg not found in PATH")

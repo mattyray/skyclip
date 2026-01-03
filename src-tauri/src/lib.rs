@@ -8,7 +8,7 @@ use commands::{
     list_flights, list_profiles, parse_srt, scan_folder, AppState,
     // Visual analysis commands
     check_python_available, install_python_deps, analyze_segment_visual,
-    generate_edit_sequence, suggest_transition,
+    generate_edit_sequence, suggest_transition, render_highlight_reel,
 };
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -53,6 +53,7 @@ pub fn run() {
             analyze_segment_visual,
             generate_edit_sequence,
             suggest_transition,
+            render_highlight_reel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
