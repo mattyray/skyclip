@@ -534,6 +534,16 @@ function App() {
               {topSegments.map((item, idx) => (
                 <div key={item.segment.id} className="segment-card">
                   <div className="segment-rank">#{idx + 1}</div>
+                  <div className="segment-thumbnail" onClick={() => openPreview(item.segment.id)}>
+                    {item.segment.thumbnail_path ? (
+                      <img
+                        src={convertFileSrc(item.segment.thumbnail_path)}
+                        alt={`Segment ${idx + 1}`}
+                      />
+                    ) : (
+                      <div className="thumbnail-placeholder">No Preview</div>
+                    )}
+                  </div>
                   <div className="segment-info" onClick={() => openPreview(item.segment.id)}>
                     <div className="segment-time">
                       {formatTimeMs(item.segment.start_time_ms)} -{" "}
@@ -603,6 +613,18 @@ function App() {
               autoPlay
               src={convertFileSrc(previewSegment.proxy_path || previewSegment.source_path)}
               style={{ maxWidth: "100%", maxHeight: "60vh" }}
+              onLoadedMetadata={(e) => {
+                const video = e.currentTarget;
+                video.currentTime = previewSegment.segment.start_time_ms / 1000;
+              }}
+              onTimeUpdate={(e) => {
+                const video = e.currentTarget;
+                const endTime = previewSegment.segment.end_time_ms / 1000;
+                if (video.currentTime >= endTime) {
+                  video.pause();
+                  video.currentTime = previewSegment.segment.start_time_ms / 1000;
+                }
+              }}
             />
             <div className="preview-info">
               <p>
@@ -611,7 +633,7 @@ function App() {
                 {(previewSegment.segment.duration_ms / 1000).toFixed(1)}s)
               </p>
               <p className="preview-note">
-                Note: Preview shows full clip. Segment time range shown above.
+                Preview loops the selected segment. Use scrubber to explore full clip.
               </p>
             </div>
             <div className="preview-actions">
