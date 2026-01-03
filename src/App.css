@@ -177,6 +177,7 @@ section {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
 }
 
 .flights-list li:last-child {
@@ -185,7 +186,38 @@ section {
 
 .flights-list li:hover {
   background: #f9fafb;
+}
+
+.flight-info {
+  flex: 1;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flight-path {
+  font-size: 11px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
+}
+
+.delete-button {
+  background: transparent;
+  color: #dc2626;
+  border: 1px solid #dc2626;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.delete-button:hover {
+  background: #dc2626;
+  color: white;
 }
 
 .flight-meta {
