@@ -173,14 +173,21 @@ pub async fn ingest_folder(
         }
         source_clip.framerate = clip_info.framerate;
 
-        // Parse SRT file if available
+        // Copy and parse SRT file if available
         if let Some(srt_path) = &clip_info.srt_path {
+            // Copy SRT to local storage so analysis works without source media
+            let srt_filename = format!("{}.srt", source_clip.id);
+            let local_srt_path = srt_dir.join(&srt_filename);
+            if std::fs::copy(srt_path, &local_srt_path).is_ok() {
+                source_clip.srt_path = Some(local_srt_path.to_string_lossy().to_string());
+            }
+
+            // Parse SRT for metadata
             if let Ok(frames) = srt_parser.parse_file(srt_path) {
                 // Extract first timestamp as recorded_at
                 if let Some(first_frame) = frames.first() {
                     source_clip.recorded_at = first_frame.timestamp;
                 }
-                // TODO: Store telemetry frames for later analysis
             }
         }
 
@@ -216,13 +223,18 @@ pub async fn ingest_folder(
             proxies_generated += 1;
         }
 
-        // Extract thumbnails
+        // Extract thumbnails from proxy (much faster than 4K source)
         let clip_thumb_dir = thumbnails_dir.join(&source_clip.id);
         std::fs::create_dir_all(&clip_thumb_dir).map_err(|e| e.to_string())?;
 
         let clip_thumb_dir_str = clip_thumb_dir.to_string_lossy().to_string();
+        // Use proxy if available, otherwise fall back to source
+        let thumb_source = source_clip
+            .proxy_path
+            .as_ref()
+            .unwrap_or(&clip_info.source_path);
         let _thumbnails = ffmpeg
-            .extract_thumbnails(&clip_info.source_path, &clip_thumb_dir_str, "thumb")
+            .extract_thumbnails(thumb_source, &clip_thumb_dir_str, "thumb")
             .map_err(|e| e.to_string())?;
 
         db.insert_clip(&source_clip)

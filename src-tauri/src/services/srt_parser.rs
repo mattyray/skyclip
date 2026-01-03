@@ -38,7 +38,8 @@ impl SrtParser {
             focal_len_pattern: Regex::new(r"\[focal_len\s*:\s*([^\]]+)\]").unwrap(),
             latitude_pattern: Regex::new(r"\[latitude\s*:\s*([^\]]+)\]").unwrap(),
             longitude_pattern: Regex::new(r"\[longitude\s*:\s*([^\]]+)\]").unwrap(),
-            altitude_pattern: Regex::new(r"\[altitude\s*:\s*([^\]]+)\]").unwrap(),
+            // Match both "altitude: X" and "rel_alt: X abs_alt: Y" formats
+            altitude_pattern: Regex::new(r"\[(?:altitude|rel_alt)\s*:\s*([^\]\s]+)").unwrap(),
             gb_yaw_pattern: Regex::new(r"\[gb_yaw\s*:\s*([^\]]+)\]").unwrap(),
             gb_pitch_pattern: Regex::new(r"\[gb_pitch\s*:\s*([^\]]+)\]").unwrap(),
             gb_roll_pattern: Regex::new(r"\[gb_roll\s*:\s*([^\]]+)\]").unwrap(),
