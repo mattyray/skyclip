@@ -4,7 +4,7 @@ Mac desktop app for drone footage analysis and highlight extraction.
 
 ## Quick Context
 
-**What it does:** Ingests DJI drone footage, automatically finds the best moments using telemetry + CV, exports as clips/Premiere projects/auto-generated videos.
+**What it does:** Ingests DJI drone footage, automatically finds the best moments using telemetry + CV, exports as clips or auto-generated highlight reels with content-aware editing.
 
 **Target drones:** Mavic 3 series, Air 3, Mini 4 Pro, Mini 3 Pro (all generate SRT telemetry files)
 
@@ -12,18 +12,174 @@ Mac desktop app for drone footage analysis and highlight extraction.
 
 ---
 
-## Current Phase: Phase 1 - Foundation
+## Current Status
 
-### Phase 1 Goals
-1. Tauri project scaffolded with React frontend
-2. SRT telemetry parser working in Rust
-3. SQLite schema implemented
-4. FFmpeg wrapper with VideoToolbox acceleration
-5. Proxy generation (with LRF shortcut)
-6. Thumbnail extraction
+### Completed
+- **Phase 1 (Foundation):** Ingest, SRT parsing, proxies, thumbnails, SQLite
+- **Phase 2 (Analysis):** Telemetry signals, segment detection, profiles, scoring
+- **Basic UI:** Folder picker, profile tabs, thumbnail grid, video preview, segment export
 
-### Phase 1 Deliverable
-Import a folder of DJI footage → parse SRT files → generate proxies/thumbnails → store in SQLite
+### Current Phase: Phase 3 - Visual Analysis & Content-Aware Editing
+
+---
+
+## Phase 3: Visual Analysis & Smart Editing
+
+### Overview
+Add Python-based visual analysis to improve segment detection and enable intelligent auto-editing when generating highlight reels.
+
+### Python Sidecar Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  PYTHON SIDECAR                          │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  analyze_clip(proxy_path) → VisualAnalysis               │
+│    ├── motion_vectors: [(frame, magnitude, direction)]  │
+│    ├── scene_changes: [frame_numbers]                   │
+│    ├── dominant_colors: [(frame, [r,g,b])]              │
+│    ├── objects: [(frame, [detections])]                 │
+│    └── embedding: [768-dim CLIP vector]                 │
+│                                                          │
+│  suggest_edit_points(clip_a, clip_b) → EditSuggestion   │
+│    ├── transition_type: "cut" | "dissolve" | "dip"      │
+│    ├── a_out_frame: optimal exit frame in clip A        │
+│    ├── b_in_frame: optimal entry frame in clip B        │
+│    └── confidence: 0.0-1.0                              │
+│                                                          │
+│  generate_edit_sequence(clips, style) → EditDecisionList│
+│    - Takes ordered clips + style profile                │
+│    - Returns frame-accurate edit decisions              │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Visual Analysis Features
+
+**Motion Analysis (OpenCV optical flow):**
+- Frame-to-frame motion magnitude and direction
+- Distinguish camera movement vs. subject movement
+- Detect "action peaks" - moments of maximum movement
+
+**Scene Content:**
+- Scene change detection (hard cuts, dissolves in source)
+- Dominant colors per segment (for color-matched transitions)
+- Horizon detection (is shot level/tilted)
+- Sky vs. ground ratio (useful for reveal shots)
+
+**Object Detection (YOLO):**
+- People, vehicles, boats, buildings
+- Track subjects entering/exiting frame
+- Detect "subject centered" moments vs. empty landscape
+
+**Semantic Understanding (CLIP embeddings):**
+- "Beach sunset", "mountain flyover", "urban downtown"
+- Group similar scenes for cohesive edits
+- Enable text search: "find all waterfall shots"
+
+### Content-Aware Editing Rules
+
+When generating highlight reels, apply intelligent editing:
+
+**1. Cut on Motion**
+- If clip A ends with rightward pan, cut (don't dissolve) to clip B with similar motion
+- Match motion direction/speed at cut points
+- Cut during movement, not static moments
+
+**2. Scene Similarity Transitions**
+- Similar colors/content → hard cut (feels continuous)
+- Very different scenes → crossfade or dip-to-black
+- Same location, different angle → match cut
+
+**3. Pacing Rules**
+- Fast action clips → shorter, quick cuts
+- Cinematic/slow clips → longer holds, slower transitions
+- Build energy: start slow, peak in middle, resolve at end
+
+**4. Subject Continuity**
+- If subject exits frame right in clip A, find clip B where something enters from left
+- Avoid jump cuts on static subjects
+
+**5. Clip Reordering (Advanced)**
+- AI can suggest reordering clips for better visual flow
+- Group by location/color/content type
+- Create narrative arc (establishing → action → resolution)
+
+### User Control Model
+
+"Let me tweak" approach:
+1. AI analyzes footage and generates initial edit
+2. User sees proposed timeline with edit decisions
+3. User can:
+   - Accept individual suggestions
+   - Override transition types
+   - Reorder clips manually
+   - Adjust in/out points
+   - Regenerate with different style
+4. Final render uses user's approved decisions
+
+### Database Schema Additions
+
+```sql
+-- Visual analysis results (computed by Python sidecar)
+ALTER TABLE segments ADD COLUMN visual_motion_avg REAL;
+ALTER TABLE segments ADD COLUMN visual_motion_direction REAL;  -- degrees
+ALTER TABLE segments ADD COLUMN dominant_color_r INTEGER;
+ALTER TABLE segments ADD COLUMN dominant_color_g INTEGER;
+ALTER TABLE segments ADD COLUMN dominant_color_b INTEGER;
+ALTER TABLE segments ADD COLUMN has_subject BOOLEAN;
+ALTER TABLE segments ADD COLUMN subject_type TEXT;  -- "person", "vehicle", etc.
+ALTER TABLE segments ADD COLUMN clip_embedding BLOB;  -- CLIP vector for search
+
+-- Edit decisions for highlight reels
+CREATE TABLE edit_sequences (
+    id TEXT PRIMARY KEY,
+    flight_id TEXT REFERENCES flights(id),
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    style TEXT  -- "cinematic", "action", "social"
+);
+
+CREATE TABLE edit_decisions (
+    id TEXT PRIMARY KEY,
+    sequence_id TEXT REFERENCES edit_sequences(id),
+    segment_id TEXT REFERENCES segments(id),
+    sequence_order INTEGER,
+
+    -- Timing adjustments
+    adjusted_start_ms INTEGER,
+    adjusted_end_ms INTEGER,
+
+    -- Transition to next clip
+    transition_type TEXT,  -- "cut", "dissolve", "dip_black", "wipe"
+    transition_duration_ms INTEGER,
+
+    -- AI confidence (user can override)
+    ai_suggested BOOLEAN DEFAULT TRUE,
+    user_approved BOOLEAN DEFAULT FALSE
+);
+```
+
+### Phase 3 Tasks
+
+1. [ ] Set up Python sidecar with Tauri
+2. [ ] Implement OpenCV motion analysis
+3. [ ] Add scene change detection
+4. [ ] Extract dominant colors per segment
+5. [ ] Integrate YOLO for object detection
+6. [ ] Add CLIP embeddings for semantic search
+7. [ ] Build edit suggestion engine
+8. [ ] Create highlight reel generator UI
+9. [ ] Implement timeline preview with edit decisions
+10. [ ] Add user override controls
+11. [ ] FFmpeg concat with transitions
+
+### Future: Music Integration
+- User provides audio track
+- Detect beats/tempo
+- Align cuts to strong beats
+- Match motion peaks to drops
 
 ---
 
@@ -36,12 +192,13 @@ Import a folder of DJI footage → parse SRT files → generate proxies/thumbnai
 - SQLite database read/write
 - Profile score calculations
 - FFmpeg subprocess orchestration
-- Premiere XML generation
 
 **Python sidecar handles (heavy, on-demand):**
 - OpenCV motion analysis
 - Scene change detection
-- (Future) CLIP embeddings, YOLO
+- CLIP embeddings
+- YOLO object detection
+- Edit suggestion algorithm
 
 ### 2. LRF Proxy Shortcut
 DJI drones generate `.LRF` files (720p H.264 proxies) alongside 4K source files.
@@ -180,7 +337,7 @@ CREATE TABLE segments (
     start_time_ms INTEGER,
     end_time_ms INTEGER,
     thumbnail_path TEXT,
-    
+
     -- Raw signals (computed once)
     motion_magnitude REAL,
     gimbal_pitch_delta_avg REAL,
@@ -190,7 +347,7 @@ CREATE TABLE segments (
     gps_speed_avg REAL,
     iso_avg REAL,
     visual_quality REAL,
-    
+
     -- User state
     is_selected BOOLEAN DEFAULT FALSE
 );
@@ -214,6 +371,13 @@ skyclip/
 │   └── stores/
 ├── python/              # Python sidecar
 │   └── skyclip_analyzer/
+│       ├── __init__.py
+│       ├── motion.py    # OpenCV optical flow
+│       ├── scene.py     # Scene change detection
+│       ├── color.py     # Dominant color extraction
+│       ├── objects.py   # YOLO detection
+│       ├── semantic.py  # CLIP embeddings
+│       └── editor.py    # Edit suggestion engine
 ├── profiles/            # JSON profile configs
 └── docs/
     └── SPEC.md          # Full product spec
@@ -225,23 +389,11 @@ skyclip/
 
 - **Rust:** Use `sqlx` for async SQLite, `serde` for JSON
 - **Frontend:** React 18 + TypeScript + Tailwind + Zustand for state
+- **Python:** Python 3.11+, opencv-python, ultralytics (YOLO), transformers (CLIP)
 - **IPC:** Tauri commands return `Result<T, String>`
 - **File paths:** Always use absolute paths in database
 - **UUIDs:** Use `uuid` crate for all IDs
 - **Errors:** Log with context, surface user-friendly messages
-
----
-
-## Phase 1 Tasks
-
-1. [ ] `cargo create-tauri-app skyclip` with React template
-2. [ ] Implement SRT parser in `src-tauri/src/services/srt_parser.rs`
-3. [ ] Create SQLite schema with migrations
-4. [ ] FFmpeg wrapper with VideoToolbox flags
-5. [ ] LRF detection and validation logic
-6. [ ] Proxy generation (LRF copy or FFmpeg fallback)
-7. [ ] Thumbnail extraction at 1fps
-8. [ ] Basic ingest command that populates database
 
 ---
 
@@ -251,3 +403,6 @@ skyclip/
 - **Tauri docs:** https://tauri.app/v2/
 - **sqlx:** https://github.com/launchbadge/sqlx
 - **FFmpeg filters:** https://ffmpeg.org/ffmpeg-filters.html
+- **OpenCV optical flow:** https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html
+- **Ultralytics YOLO:** https://docs.ultralytics.com/
+- **CLIP:** https://github.com/openai/CLIP
