@@ -358,6 +358,23 @@ impl Database {
         Ok(Self::rows_to_segments(rows))
     }
 
+    pub async fn get_segment(&self, segment_id: &str) -> Result<Option<Segment>> {
+        let row = sqlx::query(
+            "SELECT id, source_clip_id, start_time_ms, end_time_ms, duration_ms, thumbnail_path, motion_magnitude, gimbal_pitch_delta_avg, gimbal_yaw_delta_avg, gimbal_smoothness, altitude_delta, gps_speed_avg, iso_avg, visual_quality, has_scene_change, is_selected, user_adjusted_start_ms, user_adjusted_end_ms FROM segments WHERE id = ?"
+        )
+        .bind(segment_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let segments = Self::rows_to_segments(vec![row]);
+                Ok(segments.into_iter().next())
+            }
+            None => Ok(None),
+        }
+    }
+
     pub async fn get_clip(&self, clip_id: &str) -> Result<Option<SourceClip>> {
         let row = sqlx::query(
             "SELECT id, flight_id, filename, source_path, proxy_path, proxy_source, srt_path, duration_sec, resolution_width, resolution_height, framerate, recorded_at FROM source_clips WHERE id = ?"

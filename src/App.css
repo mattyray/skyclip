@@ -386,6 +386,110 @@ section {
   color: #6b7280;
 }
 
+.segment-info {
+  cursor: pointer;
+}
+
+.segment-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.export-button {
+  padding: 6px 12px;
+  font-size: 12px;
+  background-color: #059669;
+  border-color: #059669;
+  color: white;
+}
+
+.export-button:hover {
+  background-color: #047857;
+  border-color: #047857;
+}
+
+.export-button.source {
+  background-color: #2563eb;
+  border-color: #2563eb;
+}
+
+.export-button.source:hover {
+  background-color: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+.export-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Preview Modal */
+.preview-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.preview-content {
+  background: #1f2937;
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.preview-header h3 {
+  margin: 0;
+  color: white;
+}
+
+.close-button {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.close-button:hover {
+  color: white;
+}
+
+.preview-info {
+  margin-top: 16px;
+  color: #9ca3af;
+}
+
+.preview-info p {
+  margin: 4px 0;
+}
+
+.preview-note {
+  font-size: 12px;
+  font-style: italic;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #e5e7eb;

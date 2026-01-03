@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
@@ -68,6 +68,19 @@ interface ProfileInfo {
   description: string;
 }
 
+interface SegmentWithClip {
+  segment: Segment;
+  clip_id: string;
+  clip_filename: string;
+  proxy_path: string | null;
+  source_path: string;
+}
+
+interface ExportResult {
+  output_path: string;
+  duration_sec: number;
+}
+
 type View = "import" | "library" | "flight" | "analyze";
 
 function App() {
@@ -90,6 +103,10 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeResults, setAnalyzeResults] = useState<AnalyzeResult[]>([]);
   const [topSegments, setTopSegments] = useState<SegmentWithScores[]>([]);
+
+  // Preview state
+  const [previewSegment, setPreviewSegment] = useState<SegmentWithClip | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     initApp();
@@ -231,6 +248,43 @@ function App() {
       setError(`Analysis failed: ${e}`);
     } finally {
       setIsAnalyzing(false);
+    }
+  }
+
+  async function openPreview(segmentId: string) {
+    try {
+      const segmentWithClip = await invoke<SegmentWithClip>("get_segment_with_clip", {
+        segmentId,
+      });
+      setPreviewSegment(segmentWithClip);
+    } catch (e) {
+      setError(`Failed to load segment: ${e}`);
+    }
+  }
+
+  async function exportSegment(segmentId: string, useSource: boolean) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+
+    const outputPath = await save({
+      title: "Export Segment",
+      filters: [{ name: "Video", extensions: ["mp4"] }],
+      defaultPath: `segment_${segmentId.slice(0, 8)}.mp4`,
+    });
+
+    if (!outputPath) return;
+
+    setIsExporting(true);
+    try {
+      const result = await invoke<ExportResult>("export_segment", {
+        segmentId,
+        outputPath,
+        useSource,
+      });
+      alert(`Exported ${result.duration_sec.toFixed(1)}s clip to:\n${result.output_path}`);
+    } catch (e) {
+      setError(`Export failed: ${e}`);
+    } finally {
+      setIsExporting(false);
     }
   }
 
@@ -480,7 +534,7 @@ function App() {
               {topSegments.map((item, idx) => (
                 <div key={item.segment.id} className="segment-card">
                   <div className="segment-rank">#{idx + 1}</div>
-                  <div className="segment-info">
+                  <div className="segment-info" onClick={() => openPreview(item.segment.id)}>
                     <div className="segment-time">
                       {formatTimeMs(item.segment.start_time_ms)} -{" "}
                       {formatTimeMs(item.segment.end_time_ms)}
@@ -511,11 +565,73 @@ function App() {
                       )}
                     </div>
                   </div>
+                  <div className="segment-actions">
+                    <button
+                      onClick={() => exportSegment(item.segment.id, false)}
+                      disabled={isExporting}
+                      className="export-button"
+                    >
+                      Export (Quick)
+                    </button>
+                    <button
+                      onClick={() => exportSegment(item.segment.id, true)}
+                      disabled={isExporting}
+                      className="export-button source"
+                    >
+                      Export (4K)
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </section>
+      )}
+
+      {/* Preview Modal */}
+      {previewSegment && (
+        <div className="preview-modal" onClick={() => setPreviewSegment(null)}>
+          <div className="preview-content" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-header">
+              <h3>Preview: {previewSegment.clip_filename}</h3>
+              <button onClick={() => setPreviewSegment(null)} className="close-button">
+                Close
+              </button>
+            </div>
+            <video
+              controls
+              autoPlay
+              src={convertFileSrc(previewSegment.proxy_path || previewSegment.source_path)}
+              style={{ maxWidth: "100%", maxHeight: "60vh" }}
+            />
+            <div className="preview-info">
+              <p>
+                Segment: {formatTimeMs(previewSegment.segment.start_time_ms)} -{" "}
+                {formatTimeMs(previewSegment.segment.end_time_ms)} (
+                {(previewSegment.segment.duration_ms / 1000).toFixed(1)}s)
+              </p>
+              <p className="preview-note">
+                Note: Preview shows full clip. Segment time range shown above.
+              </p>
+            </div>
+            <div className="preview-actions">
+              <button
+                onClick={() => exportSegment(previewSegment.segment.id, false)}
+                disabled={isExporting}
+                className="export-button"
+              >
+                {isExporting ? "Exporting..." : "Export (Quick)"}
+              </button>
+              <button
+                onClick={() => exportSegment(previewSegment.segment.id, true)}
+                disabled={isExporting}
+                className="export-button source"
+              >
+                {isExporting ? "Exporting..." : "Export (4K Source)"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

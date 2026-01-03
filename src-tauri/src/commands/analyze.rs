@@ -123,12 +123,27 @@ pub async fn analyze_clip(
         }
 
         // Find thumbnail for this segment (use frame at segment start)
-        let thumb_second = (start_time_ms / 1000) as u32;
+        // FFmpeg outputs 1-indexed thumbnails: thumb_0001.jpg = second 0, thumb_0002.jpg = second 1, etc.
+        let thumb_second = (start_time_ms / 1000) as u32 + 1;
         let thumbnail_path = thumbnails_dir.join(format!("thumb_{:04}.jpg", thumb_second));
         let thumbnail_path_str = if thumbnail_path.exists() {
             Some(thumbnail_path.to_string_lossy().to_string())
         } else {
-            None
+            // Try finding any thumbnail as fallback
+            std::fs::read_dir(&thumbnails_dir)
+                .ok()
+                .and_then(|mut entries| {
+                    entries.find_map(|e| {
+                        e.ok().and_then(|entry| {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.starts_with("thumb_") && name.ends_with(".jpg") {
+                                Some(entry.path().to_string_lossy().to_string())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
         };
 
         // Create segment
@@ -294,6 +309,101 @@ pub struct ProfileInfo {
     pub id: String,
     pub name: String,
     pub description: String,
+}
+
+/// Get a segment with its source clip info (for preview/export)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentWithClip {
+    pub segment: Segment,
+    pub clip_id: String,
+    pub clip_filename: String,
+    pub proxy_path: Option<String>,
+    pub source_path: String,
+}
+
+#[tauri::command]
+pub async fn get_segment_with_clip(
+    state: State<'_, AppState>,
+    segment_id: String,
+) -> Result<SegmentWithClip, String> {
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    let segment = db
+        .get_segment(&segment_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Segment not found")?;
+
+    let clip = db
+        .get_clip(&segment.source_clip_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Clip not found")?;
+
+    Ok(SegmentWithClip {
+        segment,
+        clip_id: clip.id,
+        clip_filename: clip.filename,
+        proxy_path: clip.proxy_path,
+        source_path: clip.source_path,
+    })
+}
+
+/// Export a segment to a file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub output_path: String,
+    pub duration_sec: f64,
+}
+
+#[tauri::command]
+pub async fn export_segment(
+    state: State<'_, AppState>,
+    segment_id: String,
+    output_path: String,
+    use_source: bool,
+) -> Result<ExportResult, String> {
+    use crate::services::FFmpeg;
+
+    let db_guard = state.db.lock().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    let segment = db
+        .get_segment(&segment_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Segment not found")?;
+
+    let clip = db
+        .get_clip(&segment.source_clip_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Clip not found")?;
+
+    drop(db_guard);
+
+    let ffmpeg = FFmpeg::new().map_err(|e| e.to_string())?;
+
+    // Use source for quality, proxy for speed
+    let input_path = if use_source {
+        &clip.source_path
+    } else {
+        clip.proxy_path.as_ref().unwrap_or(&clip.source_path)
+    };
+
+    let start_sec = segment.start_time_ms as f64 / 1000.0;
+    let end_sec = segment.end_time_ms as f64 / 1000.0;
+
+    // Use fast export (stream copy) for quick results
+    ffmpeg
+        .export_fast(input_path, &output_path, start_sec, end_sec)
+        .map_err(|e| e.to_string())?;
+
+    Ok(ExportResult {
+        output_path,
+        duration_sec: (segment.end_time_ms - segment.start_time_ms) as f64 / 1000.0,
+    })
 }
 
 const DEFAULT_DISCOVERY_PROFILE: &str = r#"{
