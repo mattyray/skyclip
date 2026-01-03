@@ -6,6 +6,9 @@ use commands::{
     analyze_clip, analyze_flight, delete_flight, export_segment, get_clip_segments,
     get_flight_clips, get_segment_with_clip, get_top_segments, ingest_folder, init_database,
     list_flights, list_profiles, parse_srt, scan_folder, AppState,
+    // Visual analysis commands
+    check_python_available, install_python_deps, analyze_segment_visual,
+    generate_edit_sequence, suggest_transition,
 };
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -44,6 +47,12 @@ pub fn run() {
             get_segment_with_clip,
             export_segment,
             list_profiles,
+            // Visual analysis
+            check_python_available,
+            install_python_deps,
+            analyze_segment_visual,
+            generate_edit_sequence,
+            suggest_transition,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
