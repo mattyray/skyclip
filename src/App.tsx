@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { DirectorInput } from "./DirectorInput";
 import "./App.css";
 
 interface ClipInfo {
@@ -152,9 +153,6 @@ function App() {
   const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean>(false);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
-  const [directorPrompt, setDirectorPrompt] = useState("");
-  const [isDirectorGenerating, setIsDirectorGenerating] = useState(false);
-  const [targetDuration, setTargetDuration] = useState<number | null>(null);
 
   useEffect(() => {
     initApp();
