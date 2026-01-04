@@ -9,6 +9,8 @@ use commands::{
     // Visual analysis commands
     check_python_available, install_python_deps, analyze_segment_visual,
     generate_edit_sequence, suggest_transition, render_highlight_reel,
+    // AI Director commands
+    save_api_key, get_api_key, clear_api_key, director_generate_edit,
 };
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -54,6 +56,11 @@ pub fn run() {
             generate_edit_sequence,
             suggest_transition,
             render_highlight_reel,
+            // AI Director
+            save_api_key,
+            get_api_key,
+            clear_api_key,
+            director_generate_edit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
