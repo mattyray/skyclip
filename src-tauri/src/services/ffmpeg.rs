@@ -378,18 +378,26 @@ impl FFmpeg {
             if use_hw_accel {
                 args.extend(["-hwaccel", "videotoolbox"]);
             }
+            // Use -f lavfi to generate silent audio if source has none
             args.extend([
                 "-ss", &start_time,
                 "-to", &end_time,
                 "-i", &clip.input_path,
+                "-f", "lavfi",
+                "-t", &format!("{}", duration),
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
                 "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
                 "-c:v", "libx264",
                 "-crf", "18",
                 "-preset", "fast",
+                "-map", "0:v:0",
+                "-map", "0:a:0?", // Use audio from video if exists
+                "-map", "1:a:0",  // Fallback to silent audio
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-ar", "48000",
                 "-ac", "2",
+                "-shortest",
                 "-y",
             ]);
 
