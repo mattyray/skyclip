@@ -1,8 +1,6 @@
-use crate::services::{Director, SegmentContext, DirectorResponse, EditSequence, EditDecision};
+use crate::services::{Director, SegmentContext, EditSequence, EditDecision};
 use std::fs;
 use std::path::PathBuf;
-use tauri::State;
-use std::sync::Mutex;
 
 /// Simple file-based storage for API key (in app data directory)
 fn get_api_key_path() -> PathBuf {

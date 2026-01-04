@@ -1160,6 +1160,39 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* API Key Modal */}
+      {showApiKeyModal && (
+        <div className="modal-overlay" onClick={() => setShowApiKeyModal(false)}>
+          <div className="modal-content api-key-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Add Anthropic API Key</h3>
+            <p>
+              Enter your Anthropic API key to enable AI Director mode. Your key is stored locally on your machine.
+            </p>
+            <p className="modal-note">
+              Get your API key at{" "}
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">
+                console.anthropic.com
+              </a>
+            </p>
+            <input
+              type="password"
+              placeholder="sk-ant-..."
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && saveApiKey()}
+            />
+            <div className="modal-actions">
+              <button onClick={() => setShowApiKeyModal(false)} className="secondary-button">
+                Cancel
+              </button>
+              <button onClick={saveApiKey} disabled={!apiKeyInput.trim()} className="primary-button">
+                Save API Key
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

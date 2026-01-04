@@ -12,4 +12,4 @@ pub use ffmpeg::{FFmpeg, ConcatClip};
 pub use analyzer::{TelemetryAnalyzer, SegmentSignals};
 pub use scoring::{ScoreCalculator, Profile};
 pub use python_sidecar::{PythonSidecar, VisualAnalysis, EditSequence, EditDecision, ClipInfo};
-pub use director::{Director, SegmentContext, DirectorResponse, DirectorClipDecision};
+pub use director::{Director, SegmentContext};
