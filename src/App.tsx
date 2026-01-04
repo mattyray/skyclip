@@ -204,46 +204,34 @@ function App() {
     }
   }
 
-  async function generateWithDirector() {
-    if (!directorPrompt.trim() || selectedSegments.size < 2) return;
+  // Memoize director segments to avoid recalculation on every render
+  const directorSegments = useMemo(() => {
+    return Array.from(selectedSegments).map(id => {
+      const s = topSegments.find(ts => ts.segment.id === id);
+      if (!s) return null;
+      return {
+        id: s.segment.id,
+        start_ms: s.segment.start_time_ms,
+        end_ms: s.segment.end_time_ms,
+        thumbnail_path: s.segment.thumbnail_path,
+        gimbal_pitch_delta: null,
+        gimbal_yaw_delta: null,
+        gimbal_smoothness: s.segment.gimbal_smoothness,
+        gps_speed: s.segment.gps_speed_avg,
+        altitude_delta: null,
+        score: s.scores[selectedProfile] || 50,
+      };
+    }).filter(Boolean) as any[];
+  }, [selectedSegments, topSegments, selectedProfile]);
 
-    setIsDirectorGenerating(true);
-    setError(null);
+  const handleDirectorSequence = useCallback((sequence: EditSequence) => {
+    setEditSequence(sequence);
+    setCurrentView("highlight");
+  }, []);
 
-    try {
-      // Build segment data for the director
-      const segments = Array.from(selectedSegments).map(id => {
-        const s = topSegments.find(ts => ts.segment.id === id);
-        if (!s) return null;
-        return {
-          id: s.segment.id,
-          start_ms: s.segment.start_time_ms,
-          end_ms: s.segment.end_time_ms,
-          thumbnail_path: s.segment.thumbnail_path,
-          gimbal_pitch_delta: null, // We don't have these in the frontend yet
-          gimbal_yaw_delta: null,
-          gimbal_smoothness: s.segment.gimbal_smoothness,
-          gps_speed: s.segment.gps_speed_avg,
-          altitude_delta: null,
-          score: s.scores[selectedProfile] || 50,
-        };
-      }).filter(Boolean);
-
-      const sequence = await invoke<EditSequence>("director_generate_edit", {
-        prompt: directorPrompt,
-        segments,
-        targetDurationSec: targetDuration,
-      });
-
-      setEditSequence(sequence);
-      setCurrentView("highlight");
-      setDirectorPrompt("");
-    } catch (e) {
-      setError(`AI Director failed: ${e}`);
-    } finally {
-      setIsDirectorGenerating(false);
-    }
-  }
+  const handleDirectorError = useCallback((errorMsg: string) => {
+    setError(errorMsg);
+  }, []);
 
   async function loadFlights() {
     try {
@@ -896,40 +884,11 @@ function App() {
                     </div>
 
                     {apiKeyConfigured ? (
-                      <div className="director-controls">
-                        <textarea
-                          placeholder="Describe your vision... e.g., 'Make a 30-second dramatic sunset reveal, start with an establishing shot, build to the most exciting moment, end on a calm beach scene. Cinematic feel with smooth transitions.'"
-                          value={directorPrompt}
-                          onChange={(e) => setDirectorPrompt(e.target.value)}
-                          disabled={isDirectorGenerating}
-                          rows={3}
-                        />
-                        <div className="director-options">
-                          <label>
-                            Target duration:
-                            <input
-                              type="number"
-                              placeholder="Auto"
-                              value={targetDuration || ""}
-                              onChange={(e) => setTargetDuration(e.target.value ? parseInt(e.target.value) : null)}
-                              disabled={isDirectorGenerating}
-                              min={5}
-                              max={300}
-                            />
-                            <span>seconds</span>
-                          </label>
-                        </div>
-                        <button
-                          onClick={generateWithDirector}
-                          disabled={isDirectorGenerating || !directorPrompt.trim() || selectedSegments.size < 2}
-                          className="director-button"
-                        >
-                          {isDirectorGenerating ? "AI is thinking..." : `Ask AI Director (${selectedSegments.size} clips)`}
-                        </button>
-                        <p className="director-note">
-                          Uses Claude API (~$0.07-0.25 per request depending on # of clips)
-                        </p>
-                      </div>
+                      <DirectorInput
+                        segments={directorSegments}
+                        onSequenceGenerated={handleDirectorSequence}
+                        onError={handleDirectorError}
+                      />
                     ) : (
                       <p className="director-setup">
                         Add your Anthropic API key to enable AI-directed editing. The AI will see your clip thumbnails and telemetry data to make intelligent edit decisions.
