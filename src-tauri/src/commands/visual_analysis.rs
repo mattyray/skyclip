@@ -142,9 +142,16 @@ pub async fn generate_edit_sequence(
         });
     }
 
-    // Run Python edit sequence generation
-    let sidecar = PythonSidecar::new()?;
-    let sequence = sidecar.generate_edit_sequence(clips, &style, reorder, false)?;
+    // Try Python edit sequence generation, fall back to basic if unavailable
+    let sequence = match PythonSidecar::new() {
+        Ok(sidecar) => {
+            match sidecar.generate_edit_sequence(clips.clone(), &style, reorder, false) {
+                Ok(seq) => seq,
+                Err(_) => create_fallback_sequence(clips, &style),
+            }
+        }
+        Err(_) => create_fallback_sequence(clips, &style),
+    };
 
     Ok(EditSequenceResponse {
         decisions: sequence
@@ -165,6 +172,42 @@ pub async fn generate_edit_sequence(
         style: sequence.style,
         was_reordered: sequence.was_reordered,
     })
+}
+
+/// Create a basic edit sequence without Python analysis
+fn create_fallback_sequence(clips: Vec<ClipInfo>, style: &str) -> crate::services::EditSequence {
+    let (default_transition, transition_duration) = match style {
+        "action" => ("cut", 200),
+        "social" => ("cut", 300),
+        _ => ("dissolve", 500), // cinematic default
+    };
+
+    let mut total_duration_ms = 0i64;
+    let decisions: Vec<crate::services::EditDecision> = clips
+        .iter()
+        .enumerate()
+        .map(|(i, clip)| {
+            let duration = clip.end_ms - clip.start_ms;
+            total_duration_ms += duration;
+            crate::services::EditDecision {
+                clip_id: clip.clip_id.clone(),
+                sequence_order: i as i32,
+                adjusted_start_ms: clip.start_ms,
+                adjusted_end_ms: clip.end_ms,
+                transition_type: default_transition.to_string(),
+                transition_duration_ms: transition_duration,
+                confidence: 0.5,
+                reasoning: format!("Basic {} transition (Python unavailable)", style),
+            }
+        })
+        .collect();
+
+    crate::services::EditSequence {
+        decisions,
+        total_duration_ms,
+        style: style.to_string(),
+        was_reordered: false,
+    }
 }
 
 /// Suggest transition between two segments
