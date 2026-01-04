@@ -392,46 +392,49 @@ impl FFmpeg {
             let start_time = format_time(clip.start_sec);
             let end_time = format_time(clip.end_sec);
 
-            // First check if source has audio
+            // Check if source has audio
             let has_audio = self.check_has_audio(&clip.input_path);
 
-            let mut args = vec![];
-            if use_hw_accel {
-                args.extend(["-hwaccel", "videotoolbox"]);
-            }
-            args.extend([
-                "-ss", &start_time,
-                "-to", &end_time,
-                "-i", &clip.input_path,
-            ]);
-
-            // If no audio, add silent audio source
-            if !has_audio {
+            // Build command with or without audio handling
+            let status = if has_audio {
+                // Source has audio - normal encoding
+                let mut args = vec![];
+                if use_hw_accel {
+                    args.push("-hwaccel");
+                    args.push("videotoolbox");
+                }
+                Command::new(&self.ffmpeg_path)
+                    .args(&args)
+                    .args(["-ss", &start_time, "-to", &end_time, "-i", &clip.input_path])
+                    .args(["-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p"])
+                    .args(["-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p"])
+                    .args(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"])
+                    .args(["-y"])
+                    .arg(&temp_output)
+                    .status()
+                    .context("Failed to extract clip segment for xfade")?
+            } else {
+                // No audio - generate silent audio track
+                let mut args = vec![];
+                if use_hw_accel {
+                    args.push("-hwaccel");
+                    args.push("videotoolbox");
+                }
                 let duration_str = format!("{}", duration);
-                args.extend([
-                    "-f", "lavfi",
-                    "-i", &format!("anullsrc=channel_layout=stereo:sample_rate=48000:duration={}", duration_str),
-                ]);
-            }
-
-            args.extend([
-                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
-                "-c:v", "libx264",
-                "-crf", "18",
-                "-preset", "fast",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ar", "48000",
-                "-ac", "2",
-                "-shortest",
-                "-y",
-            ]);
-
-            let status = Command::new(&self.ffmpeg_path)
-                .args(&args)
-                .arg(&temp_output)
-                .status()
-                .context("Failed to extract clip segment for xfade")?;
+                let anullsrc = format!("anullsrc=channel_layout=stereo:sample_rate=48000");
+                Command::new(&self.ffmpeg_path)
+                    .args(&args)
+                    .args(["-ss", &start_time, "-to", &end_time, "-i", &clip.input_path])
+                    .args(["-f", "lavfi", "-t", &duration_str, "-i", &anullsrc])
+                    .args(["-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p"])
+                    .args(["-map", "0:v:0", "-map", "1:a:0"])
+                    .args(["-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p"])
+                    .args(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"])
+                    .args(["-shortest", "-y"])
+                    .arg(&temp_output)
+                    .status()
+                    .context("Failed to extract clip segment for xfade")?
+            };
 
             if !status.success() {
                 let _ = std::fs::remove_dir_all(&temp_clips_dir);
