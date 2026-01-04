@@ -420,7 +420,7 @@ function App() {
     setEditSequence({ ...editSequence, decisions: newDecisions, total_duration_ms: newDuration });
   }
 
-  async function renderHighlightReel() {
+  async function renderHighlightReel(useSource: boolean = false) {
     if (!editSequence || editSequence.decisions.length === 0) return;
 
     const { save } = await import("@tauri-apps/plugin-dialog");
@@ -437,15 +437,27 @@ function App() {
     setError(null);
 
     try {
-      // For now, export segments individually - full concat will come next
-      // This is a placeholder that exports the first segment
-      const firstDecision = editSequence.decisions[0];
-      await invoke<ExportResult>("export_segment", {
-        segmentId: firstDecision.clip_id,
+      // Build clips array from edit sequence decisions
+      const clips: RenderClipInput[] = editSequence.decisions.map((decision) => ({
+        segment_id: decision.clip_id,
+        adjusted_start_ms: decision.adjusted_start_ms,
+        adjusted_end_ms: decision.adjusted_end_ms,
+        transition_type: decision.transition_type,
+        transition_duration_ms: decision.transition_duration_ms,
+      }));
+
+      const result = await invoke<RenderResult>("render_highlight_reel", {
+        clips,
         outputPath,
-        useSource: false,
+        useSource,
       });
-      alert(`Highlight reel exported to:\n${outputPath}\n\n(Note: Full transition support coming soon)`);
+
+      alert(
+        `Highlight reel exported!\n\n` +
+        `Duration: ${result.duration_sec.toFixed(1)}s\n` +
+        `Clips: ${result.clips_count}\n` +
+        `Location: ${result.output_path}`
+      );
     } catch (e) {
       setError(`Failed to render highlight reel: ${e}`);
     } finally {
@@ -935,11 +947,18 @@ function App() {
 
           <div className="render-controls">
             <button
-              onClick={renderHighlightReel}
+              onClick={() => renderHighlightReel(false)}
               disabled={isRenderingHighlight || editSequence.decisions.length === 0}
               className="render-button"
             >
-              {isRenderingHighlight ? "Rendering..." : "Export Highlight Reel"}
+              {isRenderingHighlight ? "Rendering..." : "Export (Quick)"}
+            </button>
+            <button
+              onClick={() => renderHighlightReel(true)}
+              disabled={isRenderingHighlight || editSequence.decisions.length === 0}
+              className="render-button source"
+            >
+              {isRenderingHighlight ? "Rendering..." : "Export (4K Source)"}
             </button>
           </div>
         </section>

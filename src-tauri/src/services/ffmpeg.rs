@@ -292,14 +292,16 @@ impl FFmpeg {
         let mut temp_files = Vec::new();
         for (i, clip) in clips.iter().enumerate() {
             let temp_output = temp_clips_dir.join(format!("clip_{:04}.mp4", i));
+            let start_time = format_time(clip.start_sec);
+            let end_time = format_time(clip.end_sec);
 
             let mut args = vec![];
             if use_hw_accel {
                 args.extend(["-hwaccel", "videotoolbox"]);
             }
             args.extend([
-                "-ss", &format_time(clip.start_sec),
-                "-to", &format_time(clip.end_sec),
+                "-ss", &start_time,
+                "-to", &end_time,
                 "-i", &clip.input_path,
                 "-c:v", "libx264",
                 "-crf", "18",
@@ -369,14 +371,16 @@ impl FFmpeg {
             let temp_output = temp_clips_dir.join(format!("clip_{:04}.mp4", i));
             let duration = clip.end_sec - clip.start_sec;
             clip_durations.push(duration);
+            let start_time = format_time(clip.start_sec);
+            let end_time = format_time(clip.end_sec);
 
             let mut args = vec![];
             if use_hw_accel {
                 args.extend(["-hwaccel", "videotoolbox"]);
             }
             args.extend([
-                "-ss", &format_time(clip.start_sec),
-                "-to", &format_time(clip.end_sec),
+                "-ss", &start_time,
+                "-to", &end_time,
                 "-i", &clip.input_path,
                 "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
                 "-c:v", "libx264",
