@@ -208,6 +208,24 @@ impl FFmpeg {
         Ok(())
     }
 
+    /// Check if a video file has an audio stream
+    fn check_has_audio(&self, path: &str) -> bool {
+        let output = Command::new(&self.ffprobe_path)
+            .args([
+                "-v", "quiet",
+                "-select_streams", "a",
+                "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0",
+            ])
+            .arg(path)
+            .output();
+
+        match output {
+            Ok(out) => !out.stdout.is_empty(),
+            Err(_) => false, // Assume no audio if probe fails
+        }
+    }
+
     /// Precise export with re-encode (frame-exact cuts)
     pub fn export_precise<P: AsRef<Path>>(
         &self,
@@ -374,25 +392,33 @@ impl FFmpeg {
             let start_time = format_time(clip.start_sec);
             let end_time = format_time(clip.end_sec);
 
+            // First check if source has audio
+            let has_audio = self.check_has_audio(&clip.input_path);
+
             let mut args = vec![];
             if use_hw_accel {
                 args.extend(["-hwaccel", "videotoolbox"]);
             }
-            // Use -f lavfi to generate silent audio if source has none
             args.extend([
                 "-ss", &start_time,
                 "-to", &end_time,
                 "-i", &clip.input_path,
-                "-f", "lavfi",
-                "-t", &format!("{}", duration),
-                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            ]);
+
+            // If no audio, add silent audio source
+            if !has_audio {
+                let duration_str = format!("{}", duration);
+                args.extend([
+                    "-f", "lavfi",
+                    "-i", &format!("anullsrc=channel_layout=stereo:sample_rate=48000:duration={}", duration_str),
+                ]);
+            }
+
+            args.extend([
                 "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
                 "-c:v", "libx264",
                 "-crf", "18",
                 "-preset", "fast",
-                "-map", "0:v:0",
-                "-map", "0:a:0?", // Use audio from video if exists
-                "-map", "1:a:0",  // Fallback to silent audio
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-ar", "48000",
