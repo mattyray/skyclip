@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface SegmentData {
@@ -33,10 +33,16 @@ export function DirectorInput({ segments, onSequenceGenerated, onError, disabled
   const [targetDuration, setTargetDuration] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const handleGenerate = useCallback(async () => {
-    if (!prompt.trim() || segments.length < 2) return;
+  async function handleGenerate() {
+    console.log("Director: handleGenerate called", { prompt, segmentsCount: segments.length });
+
+    if (!prompt.trim() || segments.length < 2) {
+      console.log("Director: Early return - prompt empty or not enough segments");
+      return;
+    }
 
     setIsGenerating(true);
+    console.log("Director: Calling API...");
 
     try {
       const sequence = await invoke<EditSequence>("director_generate_edit", {
@@ -45,14 +51,16 @@ export function DirectorInput({ segments, onSequenceGenerated, onError, disabled
         targetDurationSec: targetDuration ? parseInt(targetDuration) : null,
       });
 
+      console.log("Director: Got sequence", sequence);
       onSequenceGenerated(sequence);
       setPrompt("");
     } catch (e) {
+      console.error("Director: Error", e);
       onError(`AI Director failed: ${e}`);
     } finally {
       setIsGenerating(false);
     }
-  }, [prompt, segments, targetDuration, onSequenceGenerated, onError]);
+  }
 
   return (
     <div className="director-controls">
@@ -79,7 +87,10 @@ export function DirectorInput({ segments, onSequenceGenerated, onError, disabled
         </label>
       </div>
       <button
-        onClick={handleGenerate}
+        onClick={() => {
+          console.log("Director: Button clicked!");
+          handleGenerate();
+        }}
         disabled={isGenerating || !prompt.trim() || segments.length < 2 || disabled}
         className="director-button"
       >
