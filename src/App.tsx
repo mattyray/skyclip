@@ -148,6 +148,14 @@ function App() {
   const [isRenderingHighlight, setIsRenderingHighlight] = useState(false);
   const [pythonAvailable, setPythonAvailable] = useState<boolean | null>(null);
 
+  // AI Director state
+  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean>(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [directorPrompt, setDirectorPrompt] = useState("");
+  const [isDirectorGenerating, setIsDirectorGenerating] = useState(false);
+  const [targetDuration, setTargetDuration] = useState<number | null>(null);
+
   useEffect(() => {
     initApp();
   }, []);
@@ -165,8 +173,77 @@ function App() {
       } catch {
         setPythonAvailable(false);
       }
+      // Check if API key is configured
+      try {
+        const key = await invoke<string | null>("get_api_key");
+        setApiKeyConfigured(!!key);
+      } catch {
+        setApiKeyConfigured(false);
+      }
     } catch (e) {
       setError(`Failed to initialize: ${e}`);
+    }
+  }
+
+  async function saveApiKey() {
+    if (!apiKeyInput.trim()) return;
+    try {
+      await invoke("save_api_key", { apiKey: apiKeyInput.trim() });
+      setApiKeyConfigured(true);
+      setShowApiKeyModal(false);
+      setApiKeyInput("");
+    } catch (e) {
+      setError(`Failed to save API key: ${e}`);
+    }
+  }
+
+  async function clearApiKey() {
+    try {
+      await invoke("clear_api_key");
+      setApiKeyConfigured(false);
+    } catch (e) {
+      setError(`Failed to clear API key: ${e}`);
+    }
+  }
+
+  async function generateWithDirector() {
+    if (!directorPrompt.trim() || selectedSegments.size < 2) return;
+
+    setIsDirectorGenerating(true);
+    setError(null);
+
+    try {
+      // Build segment data for the director
+      const segments = Array.from(selectedSegments).map(id => {
+        const s = topSegments.find(ts => ts.segment.id === id);
+        if (!s) return null;
+        return {
+          id: s.segment.id,
+          start_ms: s.segment.start_time_ms,
+          end_ms: s.segment.end_time_ms,
+          thumbnail_path: s.segment.thumbnail_path,
+          gimbal_pitch_delta: null, // We don't have these in the frontend yet
+          gimbal_yaw_delta: null,
+          gimbal_smoothness: s.segment.gimbal_smoothness,
+          gps_speed: s.segment.gps_speed_avg,
+          altitude_delta: null,
+          score: s.scores[selectedProfile] || 50,
+        };
+      }).filter(Boolean);
+
+      const sequence = await invoke<EditSequence>("director_generate_edit", {
+        prompt: directorPrompt,
+        segments,
+        targetDurationSec: targetDuration,
+      });
+
+      setEditSequence(sequence);
+      setCurrentView("highlight");
+      setDirectorPrompt("");
+    } catch (e) {
+      setError(`AI Director failed: ${e}`);
+    } finally {
+      setIsDirectorGenerating(false);
     }
   }
 
@@ -804,6 +881,68 @@ function App() {
               {selectedSegments.size >= 2 && (
                 <div className="highlight-reel-panel">
                   <h3>Create Highlight Reel</h3>
+
+                  {/* AI Director Mode */}
+                  <div className="director-section">
+                    <div className="director-header">
+                      <h4>AI Director Mode</h4>
+                      {apiKeyConfigured ? (
+                        <button onClick={clearApiKey} className="link-button">
+                          Remove API Key
+                        </button>
+                      ) : (
+                        <button onClick={() => setShowApiKeyModal(true)} className="link-button">
+                          Add API Key
+                        </button>
+                      )}
+                    </div>
+
+                    {apiKeyConfigured ? (
+                      <div className="director-controls">
+                        <textarea
+                          placeholder="Describe your vision... e.g., 'Make a 30-second dramatic sunset reveal, start with an establishing shot, build to the most exciting moment, end on a calm beach scene. Cinematic feel with smooth transitions.'"
+                          value={directorPrompt}
+                          onChange={(e) => setDirectorPrompt(e.target.value)}
+                          disabled={isDirectorGenerating}
+                          rows={3}
+                        />
+                        <div className="director-options">
+                          <label>
+                            Target duration:
+                            <input
+                              type="number"
+                              placeholder="Auto"
+                              value={targetDuration || ""}
+                              onChange={(e) => setTargetDuration(e.target.value ? parseInt(e.target.value) : null)}
+                              disabled={isDirectorGenerating}
+                              min={5}
+                              max={300}
+                            />
+                            <span>seconds</span>
+                          </label>
+                        </div>
+                        <button
+                          onClick={generateWithDirector}
+                          disabled={isDirectorGenerating || !directorPrompt.trim() || selectedSegments.size < 2}
+                          className="director-button"
+                        >
+                          {isDirectorGenerating ? "AI is thinking..." : `Ask AI Director (${selectedSegments.size} clips)`}
+                        </button>
+                        <p className="director-note">
+                          Uses Claude API (~$0.07-0.25 per request depending on # of clips)
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="director-setup">
+                        Add your Anthropic API key to enable AI-directed editing. The AI will see your clip thumbnails and telemetry data to make intelligent edit decisions.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="divider">
+                    <span>or use presets</span>
+                  </div>
+
                   <div className="highlight-options">
                     <div className="style-selector">
                       <label>Edit Style:</label>
@@ -822,7 +961,7 @@ function App() {
                       disabled={isGeneratingSequence || selectedSegments.size < 2}
                       className="generate-button"
                     >
-                      {isGeneratingSequence ? "Generating..." : `Generate Highlight Reel (${selectedSegments.size} clips)`}
+                      {isGeneratingSequence ? "Generating..." : `Generate with Preset (${selectedSegments.size} clips)`}
                     </button>
                     {pythonAvailable === false && (
                       <p className="python-warning">
