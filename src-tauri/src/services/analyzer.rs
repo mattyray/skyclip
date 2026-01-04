@@ -296,6 +296,8 @@ mod tests {
             gimbal_pitch: Some(pitch),
             gimbal_roll: Some(0.0),
         }
+
+        
     }
 
     #[test]
