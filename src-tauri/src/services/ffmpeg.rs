@@ -530,8 +530,10 @@ impl FFmpeg {
                     "-c:v", "libx264",
                     "-crf", "18",
                     "-preset", "fast",
+                    "-pix_fmt", "yuv420p",
                     "-c:a", "aac",
                     "-b:a", "192k",
+                    "-movflags", "+faststart",
                     "-y",
                 ])
                 .arg(output_path)
